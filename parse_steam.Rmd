@@ -1,0 +1,161 @@
+---
+title: "Steam Games Dataset"
+author: "Mykyta Khrabust"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Libraries
+
+```{r libraries}
+library(readr)
+library(dplyr)
+library(lubridate)
+library(tidyr)
+```
+
+## Helper function
+
+Parse Python-style bracket lists **and** plain comma-separated strings into R character vectors.
+
+```{r helper}
+# "['English', 'French']"  →  c("English", "French")
+# "RPG,Story Rich,Indie"   →  c("RPG", "Story Rich", "Indie")
+parse_list_column <- function(x) {
+  lapply(x, function(val) {
+    if (is.na(val) || val == "" || val == "[]") return(character(0))
+
+    if (startsWith(trimws(val), "[")) {
+      # Python bracket-style list: strip brackets, extract quoted tokens
+      inner   <- gsub("^\\[|\\]$", "", trimws(val))
+      matches <- regmatches(inner, gregexpr("'([^']*)'", inner))[[1]]
+      items   <- gsub("^'|'$", "", matches)
+    } else {
+      # Plain comma-separated string
+      items <- strsplit(val, ",")[[1]]
+    }
+
+    trimws(items)
+  })
+}
+```
+
+## Read raw CSV
+
+All columns are read as `character` first to avoid silent type coercion.
+
+```{r read}
+raw <- read_csv(
+  "games_trimmed.csv",                                  
+  col_types   = cols(.default = col_character()),
+  show_col_types = FALSE
+)
+```
+
+```{r}
+cat(nrow(raw), "rows ×", ncol(raw), "columns\n")
+```
+
+## Parse & clean
+
+Values in Estimated.owners are kept as-is as they are just meant to represent vague groups
+
+```{r}
+unique(raw$Estimated_owners)
+```
+
+```{r parse}
+steam <- raw %>%
+
+  # --- Platform columns: character → logical (TRUE / FALSE) ------------------
+  mutate(
+    Windows = as.logical(Windows),
+    Mac     = as.logical(Mac),
+    Linux   = as.logical(Linux)
+  ) %>%
+
+  # --- Release date: "Oct 15, 2019" → Date -----------------------------------
+  mutate(
+    `Release_date` = mdy(`Release_date`)
+  ) %>%
+
+  # --- Numeric columns -------------------------------------------------------
+  mutate(
+    across(
+      c(`Peak_CCU`, Price, Discount, `DLC_count`,
+        `Metacritic_score`, `User_score`,
+        Positive, Negative, `Score_rank`,
+        Achievements, Recommendations,
+        `Average_playtime_forever`, `Average_playtime_two_weeks`,
+        `Median_playtime_forever`,  `Median_playtime_two_weeks`),
+      as.numeric
+    )
+  ) %>%
+
+  # --- List-columns ----------------------------------------------------------
+  # Each cell becomes a character vector; the column becomes a list-column
+  mutate(
+    `Supported_languages`  = parse_list_column(`Supported_languages`),
+    `Full_audio_languages` = parse_list_column(`Full_audio_languages`),
+    Developers             = parse_list_column(Developers),
+    Publishers             = parse_list_column(Publishers),
+    Categories             = parse_list_column(Categories),
+    Genres                 = parse_list_column(Genres),
+    Tags                   = parse_list_column(Tags)
+  )
+```
+
+## Column types
+
+```{r types}
+data.frame(
+  column = names(steam),
+  type   = sapply(steam, function(x) paste(class(x), collapse = " / "))
+)
+```
+
+## Working with list-columns
+
+### Tag count per game
+
+```{r tag-count}
+steam <- steam %>%
+  mutate(n_tags = lengths(Tags))
+
+steam %>%
+  select(Name, n_tags) %>%
+  arrange(desc(n_tags)) %>%
+  head(10)
+```
+
+### Filter by tag
+
+```{r filter-tag}
+steam %>%
+  filter(sapply(Tags, function(t) "RPG" %in% t)) %>%
+  select(Name, `Release_date`, Price, n_tags) %>%
+  head(10)
+```
+
+### Unnest to long format (for frequency analysis)
+
+```{r unnest, eval=FALSE}
+
+
+steam_tags_long <- steam %>%
+  select(AppID, Name, Tags) %>%
+  unnest(Tags)
+
+# Most common tags across the dataset
+steam_tags_long %>%
+  count(Tags, sort = TRUE) %>%
+  head(20)
+```
