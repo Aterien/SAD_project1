@@ -30,6 +30,10 @@ Wybrać dwie zmienne ciągłe i przedstawić na wykresie kropkowym zależność 
 
 `Positive reviews` vs `Average playtime`
 
+### d)
+
+Rozklad ceny, Positive_percent,
+
 ### f)
 
 Multiple regression

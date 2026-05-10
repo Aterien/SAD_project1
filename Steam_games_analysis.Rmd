@@ -1,6 +1,6 @@
 ---
 title: "Steam Games Dataset"
-author: "Mykyta Khrabust"
+author: "Mykyta Khrabust, "
 output:
   html_document:
     toc: true
@@ -178,6 +178,8 @@ steam <- steam %>%
 
 # Part A : Basic characteristics of the dataset
 
+## Estimated ownership
+
 ```{r}
 
 # Parse the lower bound of each group to sort categories numerically
@@ -213,6 +215,167 @@ ggplot(steam_owners, aes(x = Estimated_owners, y = n_games)) +
   )
 ```
 
+## Number of games by year
+
 ```{r}
+# Count games per release year, drop rows with missing dates
+steam_by_year <- steam %>%
+  filter(!is.na(Release_date)) %>%
+  mutate(year = as.integer(format(Release_date, "%Y"))) %>%
+  count(year, name = "n_games")
+
+options(repr.plot.width = 10, repr.plot.height =2)
+ggplot(steam_by_year, aes(x = year, y = n_games)) +
+  geom_line(color = "#4e79a7", linewidth = 0.9) + # line
+  geom_point(color = "#4e79a7", size = 2.5) + # scatter
+  geom_text( # number labels 
+    aes(label = n_games),
+    vjust = -0.9,
+    size  = 3,
+    fontface = "bold",
+    color = "#2c2c2c"
+  ) +
+  scale_x_continuous(breaks = seq(min(steam_by_year$year),
+                                  max(steam_by_year$year), by = 1)) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  labs(
+    title = "Number of games released per year",
+    x     = "Year",
+    y     = "Number of games"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    plot.title     = element_text(face = "bold", margin = margin(b = 12))
+  )
+```
+
+```{r}
+year_min <- 2011
+
+steam_by_halfyear <- steam %>%
+  filter(!is.na(Release_date)) %>%
+  mutate(
+    year   = as.integer(format(Release_date, "%Y")),
+    half   = ifelse(as.integer(format(Release_date, "%m")) <= 6, 1, 2),
+    period = year + (half - 1) * 0.5
+  ) %>%
+  count(period, name = "n_games") %>%
+  filter(period >= year_min, period < 2026)   # drop pre-2011 and incomplete 2026
+
+train_half <- steam_by_halfyear %>%
+  filter(period > year_min) %>%               # avoid log(0)
+  mutate(
+    log_games = log(n_games),
+    log_t     = log(period - year_min),
+    log_t2    = log_t^2
+  )
+# Training a model 
+model_games_by_half_year <- lm(log_games ~ log_t + log_t2, data = train_half)
+
+# Predictions back-transformed to original scale
+pred_df <- steam_by_halfyear %>%
+  filter(period > year_min) %>%
+  mutate(
+    log_t        = log(period - year_min),
+    log_t2       = log_t^2,
+    n_games_pred = exp(predict(model_games_by_half_year,
+                               newdata = data.frame(log_t  = log_t,
+                                                    log_t2 = log_t2)))
+  )
+
+ggplot() +
+  geom_point(
+    data = steam_by_halfyear %>% filter(period > year_min),
+    aes(x = period, y = n_games),
+    color = "#4e79a7", size = 2.2
+  ) +
+  geom_line(
+    data = pred_df,
+    aes(x = period, y = n_games_pred),
+    color = "#f28e2b", linewidth = 1.0, linetype = "dashed"
+  ) +
+  scale_x_continuous(
+    breaks = seq(year_min, 2025, by = 1),
+    minor_breaks = seq(year_min, 2025, by = 0.5)
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  labs(
+    title    = "Games released per half-year — quadratic power trend (2011+)",
+    subtitle = sprintf(
+      "n_games = %.2f · (period − %d)^(%.2f + %.2f·log(period − %d))",
+      a, year_min, p, q, year_min),
+    x = "Period", y = "Number of games"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_line(color = "grey92"),
+    plot.title       = element_text(face = "bold", margin = margin(b = 4)),
+    plot.subtitle    = element_text(color = "#f28e2b", margin = margin(b = 10))
+  )
+```
+
+```{r}
+a <- exp(coef(model_half)[["(Intercept)"]])
+p <- coef(model_half)[["log_t"]]
+q <- coef(model_half)[["log_t2"]]
+
+cat("Fitted model formula:\n")
+cat(sprintf(
+  "n_games = %.4f * (period - %d) ^ (%.4f + %.4f * log(period - %d))\n",
+  a, year_min, p, q, year_min
+))
+```
+
+### Diagnostyka modelu
+
+```{r}
+summary(model_games_by_half_year)
 
 ```
+
+```{r}
+plot(model_games_by_half_year)
+```
+
+```{r}
+# See which periods the outlier rows correspond to
+influential <- c(1, 2, 3)   # replace with the numbers you see on the plots
+train_half[influential, ]
+```
+
+```{r}
+
+par(mfrow = c(2, 2)); plot(model_games_by_half_year); par(mfrow = c(1, 1))
+```
+
+### Model diagnostics summary
+
+The model was fit in log-log space using a quadratic polynomial:
+
+$$\log(n\_games) = a + p \cdot \log(t) + q \cdot \log^2(t), \quad t = \text{period} - 2011$$
+
+estimated on half-yearly Steam release counts from 2011.5 to 2025.5 (n = 29).
+
+**LINE assumptions:**
+
+-   **Linearity.** *Residuals vs Fitted* shows the red line close to zero across most of the fitted range with no pronounced curve, suggesting the quadratic log-log transformation adequately captures the trend. A mild downward slope at the right tail indicates slight overestimation in the most recent periods.
+
+-   **Independence.** Observations are aggregated half-year counts from a single growing platform — consecutive periods are likely positively correlated (more developers join every year). Formal independence cannot be claimed; a time-series model would be more appropriate if serial correlation is a concern.
+
+-   **Normality.** The *Q-Q plot* shows most points tracking the diagonal well in the central range. Points 1 and 4 deviate noticeably in both tails, indicating heavier-than-normal tails. With n = 29 this is a moderate concern but not critical for inference given the large F-statistic.
+
+-   **Equal variance (homoscedasticity).** *Scale-Location* shows a declining trend — residual spread is larger for small fitted values (early periods) and shrinks toward recent years. This is a mild violation of homoscedasticity. Point 4 (visible in all four panels) is the primary driver.
+
+**Point 4** (identifiable via `train_half[4, ]`) appears as an influential outlier across all diagnostic plots and sits beyond Cook's distance boundary in *Residuals vs Leverage*. It corresponds to an early period with anomalously low releases relative to the fitted trend and meaningfully affects the coefficient estimates.
+
+**Coefficients and model fit:**
+
+All three coefficients are highly significant: the intercept (p \< 2e-16), the linear log term `log_t` (p = 5.35e-06), and the quadratic term `log_t2` (p = 5e-04). The F-statistic of 328.5 on 2 and 26 degrees of freedom confirms that the model as a whole explains the data far better than an intercept-only baseline.
+
+**R² = 0.962** (adjusted 0.959) means the model accounts for \~96% of variance in log-transformed game counts — a strong fit for real-world count data. The residual standard error of 0.28 on the log scale translates to a typical multiplicative error of roughly e0.28≈1.32e^{0.28} \approx 1.32
+e0.28≈1.32, i.e. predictions are off by about ±32% on the original scale.
+
+**Overall conclusion:** the model fits well and all predictors are significant, but two assumptions — independence and homoscedasticity — are not fully met. Results should be interpreted as a descriptive trend model rather than a formal inferential one.
