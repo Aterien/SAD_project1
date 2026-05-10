@@ -1,0 +1,182 @@
+---
+title: "Analiza gier Steam"
+author: "Mykyta Khrabust & Artem Vashchenko"
+date: "2026-05-10"
+output:
+  ioslides_presentation: default
+  beamer_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Dane
+
+Dane zawierają ponad 115000 gier steam z róznymi statystykami (cena, )
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE}
+library(readr)
+games <- read_csv("games.csv")
+library(dplyr)
+games <- games %>%
+  select(-c(`Required age`, `About the game`, `Reviews`, `Header image`, `Website`,
+            `Support url`, `Support email`, `Metacritic url`, `Notes`, `Screenshots`,
+            `Movies`))
+```
+
+Podstawowe statystyki ceny
+```{r}
+summary(games$Price)
+```
+
+## Rozkład ceny
+
+Chcemy zbadać z jakiego rozkładu pochodzi cena. Zróbmy najpierw histogram cen żeby
+zgadnąc jaki rozkład może mieć nasza zmienna.
+
+```{r}
+library(ggplot2)
+ggplot(games, aes(x=Price)) + geom_histogram(fill = "steelblue", color = "black", bins = 40)
+```
+
+Widzimy, że nie otzymujemy dużo informacji. Rozważmy więc inne podejście. Wiemy,
+że większość gier ma cenę w zasięgu $0-$100. Użyjmy więc skali logarytmycznej (log10) by
+$1 → $10 → $100 były w równym odstępie i zobaczyliśmy to lepiej. 
+W tym celu użyjmy funkcję log1p która liczy log(1+x) (bo mamy gry z ceną $0).
+
+```{r}
+library(scales)
+
+ggplot(games, aes(x = Price)) +
+  geom_histogram(fill = "steelblue", color = "black", bins = 40) +
+  scale_x_continuous(trans = "log1p", 
+                     breaks = c(0, 5, 15, 30, 60, 100, 500, 1000)) +
+  labs(title = "Rozkład cen w skali logarytmycznej",
+       x = "Cena ($) - Skala logarytmyczna",
+       y = "Liczba gier")
+```
+Widzimy, że w skali logarytmycznej, jak usunięmy gry bezpłatne, to dość rozsądnym
+rozkładem dla naszych cen będzie rozkład normalny. Ponieważ widoczne jest to w skali
+logarytmycznej, to najprawdopodobniej mamy rozkład log-normalby. 
+Mamy duże dane (115k obserwacji), więc dla sprawdzenia naszej hipotezy najlepiej 
+będzie użyć wykres kwantylowy. W tym celu zlogarytmujmy nasze ceny i zróbmy odpowiednie
+wykresy. 
+
+```{r}
+# Usuwamy bezpłatne gry
+paid_games <- games %>%
+  filter(Price > 0) %>%
+  mutate(log_price = log10(Price))
+
+ggplot(paid_games, aes(sample = log_price)) +
+  stat_qq(alpha = 0.5) +
+  stat_qq_line(color = "red", linewidth = 1) +
+  labs(title = "Wykres kwantylowy dla cen w skali logarytmycznej",
+       x = "Teoretyczne kwantyle normalne",
+       y = "Kwantyle z obserwacji") +
+  theme_minimal()
+```
+Widzimy, że prosta leży pięknie na danych oprózc ogonów. Ogonami są bardzo małe ceny
+(<$1) i odp. bardzo wysoke ceny ($200-$1000). Ostatnie nie są interesujące bo żaden
+rozsądny developer nie bedzie ustawiał taką wysoką cenę.
+
+Porównajmy także wykres kwantylowy z innymi rozkładami, by upewnić się że będzie to
+najlepsze dopasowanie. Tutaj pojawia się rozkład Weibulla, który jest blisky do
+rozkładów gamma i log-normal i jest dobrym kandydatem na nasz rozkład. W tym celu użyjmy bibliotekę fitdistrplus.
+
+```{r}
+library(fitdistrplus)
+library(patchwork)    # Żeby mieć kilka wykresów
+
+# Usuwamy gry bezpłatne
+# 115k obserwacji to jest za duzó, dla testu wystarczy 20k
+plot_data <- games %>% filter(Price > 0) %>% sample_n(20000)
+prices <- plot_data$Price
+
+# Estymujemy parametry z różnych rozkładów
+fit_norm   <- fitdist(prices, "norm")
+fit_lnorm   <- fitdist(prices, "lnorm")
+fit_gamma   <- fitdist(prices, "gamma")
+fit_weibull <- fitdist(prices, "weibull")
+
+# Funkcja pomocnicza dla utworzenia wykresów kwantylowych
+make_qq_plot <- function(data, dist_name, q_func, params, title, aic_val) {
+  ggplot(data.frame(price = data), aes(sample = price)) +
+    stat_qq(distribution = q_func, dparams = params, alpha = 0.5) +
+    stat_qq_line(distribution = q_func, dparams = params, color = "red") +
+    labs(title = title, subtitle= paste("AIC: ", round(aic_val, 2)), 
+         x = "Theoretical", y = "Actual") +
+    theme_minimal()
+}
+
+# Tworzymy cztery wykresy
+p_norm <- make_qq_plot(prices, "norm", qnorm, 
+                       list(mean = mean(prices), sd = sd(prices)), "Normal Dist",
+                       fit_norm$aic)
+
+p_log  <- make_qq_plot(prices, "lnorm", qlnorm, 
+                       as.list(fit_lnorm$estimate), "Log-Normal Dist",
+                       fit_lnorm$aic)
+
+p_gamma <- make_qq_plot(prices, "gamma", qgamma, 
+                        as.list(fit_gamma$estimate), "Gamma Dist",
+                        fit_gamma$aic)
+
+p_weib <- make_qq_plot(prices, "weibull", qweibull, 
+                       as.list(fit_weibull$estimate), "Weibull Dist",
+                       fit_weibull$aic)
+
+# Ustawiamy wykresu w kwadrat
+(p_norm + p_log) / (p_gamma + p_weib) +
+  plot_annotation(title = "Distribution Comparison via Q-Q Plots",
+                  subtitle = "Lower AIC indicates a better statistical fit")
+```
+Jak widzimy, log-normalny model 
+ładnie przewiduje ceny w zakresie $1-$100. Zróbmy więc odpowiedny wykres gęstości
+estymując parametry naszego rozkładu metodą MLE.
+
+```{r}
+# Estymacja parametrów
+mean_log <- mean(paid_games$log_price)
+sd_log <- sd(paid_games$log_price)
+
+ggplot(paid_games, aes(x = log_price)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 bins = 40, fill = "steelblue", color = "black", alpha = 0.6) +
+  
+  stat_function(fun = dnorm, 
+                args = list(mean = mean_log, sd = sd_log), 
+                color = "red", linetype = "dashed", linewidth = 1.2) +
+  
+  # Niech oś OX pokazuje zwykłe ceny a nie złogarytmowane
+  scale_x_continuous(labels = function(x) round(10^x, 2)) +
+  
+  labs(title = "Log-Normalny rozkład cen",
+       x = "Cena ($)",
+       y = "Gęstość") +
+  theme_minimal()
+```
+Dane mają tendencje do dopasowania do log-normalnego rozkładu. Przecież ceny nie
+zmienają się ciągłę, widzimy że mamy skoky w najbardziej popularnych cenach 
+($0.99, $4.99, $9.99 itd).
+
+Przez te skoky nie bardzo widać że cena naprawdę ma rozkład log-normalny. Możemy
+porównać dystrybuantę naszego rozkładu z teoretyczną dystrubantą.
+```{r}
+ggplot(paid_games, aes(x = Price)) +
+  # Dopasowana dystrybuanta
+  stat_ecdf(geom = "step", color = "steelblue", linewidth = 1) +
+  # Teoretyczna dystrybuanta
+  stat_function(fun = plnorm, 
+                args = list(meanlog = mean(log(paid_games$Price)), 
+                            sdlog = sd(log(paid_games$Price))), 
+                color = "red", linetype = "dashed") +
+  scale_x_log10() +
+  labs(title = "Dystrybuanta",
+       subtitle = "Niebelska: Dane | Czerwone: Dystrybuanta teoretyczna",
+       x = "Cena ($)", y = "Prawdopodobieństwo")
+```
+Widzimy, że jest bardzo fajne dopasowanie. Widać także skoki na najbardziej popularnych cenach
+($1, $5, $7, $10). Ponieważ liczba obserwacji jest duża (115k) to znależenie przedziałów ufności nie ma sensu, bo zaczyna działać prawo wielkich liczb i odpowiedni przedział będzie
+bardzo mały.
