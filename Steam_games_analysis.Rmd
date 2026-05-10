@@ -181,16 +181,37 @@ steam <- steam %>%
 ## Estimated ownership
 
 ```{r}
+humanize_owner_est <- function(x) {
+      parts <- strsplit(x, "-")[[1]]
+      format_num <- function(n) {
+        n <- as.numeric(trimws(n))
+        if      (n == 0)           "0"
+        else if (n < 1e3)          as.character(n)
+        else if (n < 1e6)          paste0(n / 1e3, "K")
+        else if (n < 1e9)          paste0(n / 1e6, "M")
+        else                       paste0(n / 1e9, "B")
+      }
+      paste0(format_num(parts[1]), "-", format_num(parts[2]))
+    }
+```
 
+```{r}
 # Parse the lower bound of each group to sort categories numerically
 steam_owners <- steam %>%
   count(Estimated_owners, name = "n_games") %>%
   mutate(
-    lower_bound = as.numeric(sub("-.*", "", Estimated_owners)),
-    Estimated_owners = fct_reorder(Estimated_owners, lower_bound)
+    sort_lower_bound = as.numeric(sub("-.*", "", Estimated_owners)),
+    Estimated_owners = fct_reorder(Estimated_owners, sort_lower_bound)
+  ) %>%
+  mutate( # converting zeros to n,m,b 20000 -> 20K
+    Steam_owners_human = sapply(as.character(Estimated_owners), humanize_owner_est),
+    Steam_owners_human = fct_reorder(Steam_owners_human, sort_lower_bound)
   )
 
-ggplot(steam_owners, aes(x = Estimated_owners, y = n_games)) +
+```
+
+```{r}
+ggplot(steam_owners, aes(x = Steam_owners_human, y = n_games)) +
   geom_col(fill = "#7040BF", width = 0.7) +
   geom_text(
     aes(label = n_games),
@@ -212,6 +233,56 @@ ggplot(steam_owners, aes(x = Estimated_owners, y = n_games)) +
     axis.text.x      = element_text(angle = 45, hjust = 1),
     panel.grid.major.x = element_blank(),
     plot.title       = element_text(face = "bold", margin = margin(b = 12))
+  )
+```
+
+```{r}
+steam %>%
+  filter(Estimated_owners == "100000000 - 200000000") %>%
+  select(Name, Estimated_owners, Price, Release_date)
+```
+
+```{r}
+steam_violin <- steam %>%
+  filter(!is.nan(Positive_Percent)) %>%
+  mutate(
+    lower_bound = as.numeric(sub("-.*", "", Estimated_owners)),
+    Estimated_owners_human = sapply(as.character(Estimated_owners), humanize_owner_est),
+    Estimated_owners_human = fct_reorder(Estimated_owners_human, lower_bound)
+  )
+
+# Pre-compute mean and median per group for the overlay
+ownership_stats <- steam_violin %>%
+  group_by(Estimated_owners_human) %>%
+  summarise(
+    mean_pp   = mean(Positive_Percent),
+    median_pp = median(Positive_Percent),
+    .groups   = "drop"
+  )
+
+ggplot(steam_violin, aes(x = Estimated_owners_human, y = Positive_Percent)) +
+  geom_violin(fill = "#45AF4B", alpha = 0.4, color = NA) +
+  geom_boxplot(width = 0.1, fill = "white", color = "#2c2c2c",
+               outlier.shape = NA) +          # thin boxplot inside violin
+  geom_point(data = ownership_stats,
+             aes(y = mean_pp, shape = "Mean"),
+             color = "#e15759", size = 2.5) +
+  geom_point(data = ownership_stats,
+             aes(y = median_pp, shape = "Median"),
+             color = "#f28e2b", size = 2.5) +
+  scale_shape_manual(values = c("Mean" = 17, "Median" = 16), name = NULL) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 10)) +
+  labs(
+    title   = "Distribution of Positive Review % by Estimated Owners group",
+    x       = "Estimated owners",
+    y       = "Positive reviews (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    plot.title       = element_text(face = "bold", margin = margin(b = 10)),
+    legend.position  = "top"
   )
 ```
 
@@ -274,6 +345,28 @@ train_half <- steam_by_halfyear %>%
 # Training a model 
 model_games_by_half_year <- lm(log_games ~ log_t + log_t2, data = train_half)
 
+# Confidence intervals
+pred_ci <- steam_by_halfyear %>%
+  filter(period > year_min) %>%
+  mutate(
+    log_t  = log(period - year_min),
+    log_t2 = log_t^2
+  )
+
+# predict() with interval="confidence" returns fit, lwr, upr in log space
+ci_matrix <- predict(model_games_by_half_year,
+                     newdata  = data.frame(log_t  = pred_ci$log_t,
+                                           log_t2 = pred_ci$log_t2),
+                     interval = "prediction",
+                     level    = 0.95)
+
+pred_ci <- pred_ci %>%
+  mutate(
+    n_games_pred = exp(ci_matrix[, "fit"]),
+    ci_lwr       = exp(ci_matrix[, "lwr"]),   # back-transform to original scale
+    ci_upr       = exp(ci_matrix[, "upr"])
+  )
+
 # Predictions back-transformed to original scale
 pred_df <- steam_by_halfyear %>%
   filter(period > year_min) %>%
@@ -286,6 +379,11 @@ pred_df <- steam_by_halfyear %>%
   )
 
 ggplot() +
+  geom_ribbon(
+    data  = pred_ci,
+    aes(x = period, ymin = ci_lwr, ymax = ci_upr),
+    fill  = "#f28e2b", alpha = 0.2
+  ) +
   geom_point(
     data = steam_by_halfyear %>% filter(period > year_min),
     aes(x = period, y = n_games),
@@ -337,18 +435,18 @@ summary(model_games_by_half_year)
 ```
 
 ```{r}
+confint(model_games_by_half_year)
+```
+
+```{r}
 plot(model_games_by_half_year)
+# par(mfrow = c(2, 2)); plot(model_games_by_half_year); par(mfrow = c(1, 1))
 ```
 
 ```{r}
 # See which periods the outlier rows correspond to
 influential <- c(1, 2, 3)   # replace with the numbers you see on the plots
 train_half[influential, ]
-```
-
-```{r}
-
-par(mfrow = c(2, 2)); plot(model_games_by_half_year); par(mfrow = c(1, 1))
 ```
 
 ### Model diagnostics summary
