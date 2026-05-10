@@ -24,7 +24,7 @@ A repository dedicated for the first SAD project (Group 6)
 
 -   Genres X Average Playtime
 
-### c) 
+### c)
 
 Wybrać dwie zmienne ciągłe i przedstawić na wykresie kropkowym zależność między nimi, wraz z zaznaczoną prostą regresji liniowej (z wyrazem wolnym). Sprawdzić, czy spełnione są założenia modelu regresji liniowej przy pomocy wykresów diagnostycznych. Rozważyć dopasowanie bardziej skomplikowanej funkcji (np. wielomianu stopnia większego od 1).
 
@@ -47,3 +47,7 @@ Predictors:
 -   DLC count
 
 -   Achievements
+
+Correlation:
+
+Metacritic_score X positive_percent
