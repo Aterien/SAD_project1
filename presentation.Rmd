@@ -89,7 +89,7 @@ bardzo małe ceny (\<\$1) i odp. bardzo wysoke ceny (\$200-\$1000).
 Ostatnie nie są interesujące bo żaden rozsądny developer nie bedzie
 ustawiał taką wysoką cenę.
 
-Porównajmy także wykres kwantylowy z innymi rozkładami, by upewnić się
+Porównajmy także wykresy kwantylowe z innymi rozkładami, by upewnić się
 że będzie to najlepsze dopasowanie. Tutaj pojawia się rozkład Weibulla,
 który jest blisky do rozkładów gamma i log-normal i jest dobrym
 kandydatem na nasz rozkład. W tym celu użyjmy bibliotekę fitdistrplus.
@@ -172,6 +172,38 @@ Dane mają tendencje do dopasowania do log-normalnego rozkładu. Przecież
 ceny nie zmienają się ciągłę, widzimy że mamy skoky w najbardziej
 popularnych cenach (\$0.99, \$4.99, \$9.99 itd).
 
+Zobaczmy podstawowe statystyki na wykresie.
+
+```{r}
+# Mean, median, mode
+mean_val   <- mean(paid_games$Price, na.rm = TRUE)
+median_val <- median(paid_games$Price, na.rm = TRUE)
+dens <- density(paid_games$Price, adjust=0.5)
+mode_val <- dens$x[which.max(dens$y)]
+
+vlines <- data.frame(
+  stats = c("Mean", "Median", "Mode"),
+  values = c(mean_val, median_val, mode_val),
+  color = c("red", "blue", "darkgreen")
+)
+
+ggplot(paid_games, aes(x = log_price)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 bins = 40, fill = "steelblue", color = "black", alpha = 0.6) +
+
+  geom_vline(data = vlines, aes(xintercept = log10(values), color = stats), 
+             linewidth = 1.2) +
+  
+  # Niech oś OX pokazuje zwykłe ceny a nie złogarytmowane
+  scale_x_continuous(labels = function(x) round(10^x, 2)) +
+  scale_color_manual(values = c("Mean" = "red", "Median" = "blue", "Mode" = "darkgreen")) +
+  
+  labs(title = "Rozkład cen w skali logarytmicznej",
+       x = "Cena ($)",
+       y = "Gęstość") +
+  theme_minimal()
+```
+
 Przez te skoky nie bardzo widać że cena naprawdę ma rozkład
 log-normalny. Możemy porównać dystrybuantę naszego rozkładu z
 teoretyczną dystrubantą.
@@ -231,7 +263,6 @@ ggplot(paid_games, aes(x = price_bracket, y = Recommendations, fill = price_brac
 cor.test(paid_games$Price, paid_games$Recommendations, method = "spearman")
 ```
 
-
 ```{r}
 # Chi-square test for independence
 paid_games$PriceCategory <- cut(
@@ -245,6 +276,7 @@ table_data <- table(paid_games$Publishers, paid_games$PriceCategory)
 chisq.test(table_data)
 # Small p-value means there's a dependence 
 ```
+
 ```{r}
 library(tidyverse)
 
@@ -256,13 +288,35 @@ games_clean <- paid_games %>%
 
 # 2. Fix Owner Ranges (Making them an ordered factor)
 # This prevents R from sorting them alphabetically (like "100k" before "20k")
+raw_levels <- c(
+  "0 - 0", "0 - 20000", "20000 - 50000", "50000 - 100000", 
+  "100000 - 200000", "200000 - 500000", "500000 - 1000000",
+  "1000000 - 2000000", "2000000 - 5000000", "5000000 - 10000000",
+  "10000000 - 20000000", "20000000 - 50000000", "50000000 - 100000000",
+  "100000000 - 200000000", "200000000 - 500000000", "500000000 - 1000000000",     
+  "1000000000 - 2000000000"
+)
+
+# 3. Function to turn "1000000 - 2000000" into "1M - 2M"
+format_short_range <- function(x) {
+  sapply(x, function(s) {
+    if (s == "0 - 0") return("0")
+    # Split the range, convert to numeric
+    nums <- as.numeric(unlist(strsplit(s, " - ")))
+    # Format using short scale (K, M, B)
+    formatted <- label_number(scale_cut = cut_short_scale())(nums)
+    # Join them back together
+    paste(formatted, collapse = " - ")
+  })
+}
+
+clean_labels_short <- format_short_range(raw_levels)
+
+# 4. Apply to the data
 games_clean <- games_clean %>%
   mutate(Owners_Factor = factor(`Estimated owners`, 
-                                levels = c("0 - 0", "0 - 20000", "20000 - 50000", "50000 - 100000", 
-"1000000 - 2000000", "2000000 - 5000000", "5000000 - 10000000",
-"10000000 - 20000000", "20000000 - 50000000", "50000000 - 100000000",
-"100000000 - 200000000", "200000000 - 500000000", "500000000 - 1000000000",     
-"1000000000 - 2000000000"), # Adjust levels to match your data
+                                levels = raw_levels, 
+                                labels = clean_labels_short, 
                                 ordered = TRUE))
 ```
 
@@ -277,11 +331,15 @@ category_price_relation <- games_clean %>%
   filter(count > 100) %>% # Ignore rare categories
   arrange(desc(median_price))
 
+max_y <- ceiling(max(category_price_relation$median_price))
+
 ggplot(head(category_price_relation, 20), aes(x = reorder(category_list, median_price), y = median_price)) +
   geom_col(fill = "darkgreen") +
   coord_flip() +
-  labs(title = "Top 20 Most Expensive Game Categories", x = "Category", y = "Median Price ($)")
+  scale_y_continuous(breaks = seq(0, max_y, by = 1)) +
+  labs(title = "Top 20 najdroższych kategorii gier", x = "Kategoria", y = "Średnia cena ($)")
 ```
+
 ```{r}
 ggplot(games_clean, aes(x = Owners_Factor, y = Price, fill = Owners_Factor)) +
   geom_boxplot(outlier.shape = NA) + 
@@ -307,6 +365,7 @@ games_clean %>%
   labs(title = "Pricing Strategies of Top 15 Publishers", x = "Price ($)", y = "Publisher") +
   theme(legend.position = "none")
 ```
+
 ```{r}
 # Does category affect price?
 kruskal.test(Price ~ category_list, data = games_clean)
@@ -316,8 +375,59 @@ games_clean %>%
   group_by(price_tier) %>%
   summarise(avg_recs = mean(Recommendations))
 ```
+
 ```{r}
 table_data <- table(games_clean$category_list, games_clean$Owners_Factor)
 chisq.test(table_data)
+```
+```{r}
+library(tidyverse)
+
+# 1. Define the cleaning pattern
+# This looks for common suffixes, case-insensitive, with or without dots
+legal_suffixes <- "\\b(Inc|INC|LLC|Llc|Ltd|LTD|Corp|Corporation|S.L|S.A|Co|GmbH|Co., Ltd|Co., Ltd.)[.]?\\b"
+
+publishers_clean <- paid_games %>%
+  filter(!is.na(Publishers), Publishers != "") %>%
+  # Separate co-publishers first
+  mutate(publisher_list = strsplit(as.character(Publishers), ",")) %>%
+  unnest(publisher_list) %>%
+  # Clean up the names
+  mutate(
+    publisher_list = trimws(publisher_list),
+    # Remove legal suffixes
+    publisher_list = str_remove_all(publisher_list, legal_suffixes),
+    # Remove any trailing commas or dots left behind
+    publisher_list = str_remove_all(publisher_list, "[.,]$"),
+    # Final trim to catch new spaces created by removals
+    publisher_list = trimws(publisher_list)
+  ) %>%
+  filter(publisher_list != "") # Remove any that became empty after cleaning
+# 2. Get Top 20 counts
+top_20_publishers <- publishers_clean %>%
+  count(publisher_list, sort = TRUE) %>%
+  head(20)
+
+# 3. Plot
+ggplot(top_20_publishers, aes(x = reorder(publisher_list, n), y = n)) +
+  geom_col(fill = "steelblue", color = "white") +
+  # Add text labels on top of the bars
+  geom_text(aes(label = n), hjust = -0.2, size = 3, color = "black") +
+  coord_flip() +
+  # Expand the y-axis a bit to make room for the labels
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Top 20 Publishers by Number of Games",
+       subtitle = "Based on total published paid games",
+       x = "Publisher",
+       y = "Number of Games Published") +
+  theme_minimal()
+```
+```{r}
+# Quick check of top publisher pricing strategies
+publishers_clean %>%
+  filter(publisher_list %in% top_20_publishers$publisher_list) %>%
+  group_by(publisher_list) %>%
+  summarise(median_price = median(Price)) %>%
+  arrange(desc(median_price))
 ```
 
