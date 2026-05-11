@@ -473,7 +473,181 @@ estimated on half-yearly Steam release counts from 2011.5 to 2025.5 (n = 29).
 
 All three coefficients are highly significant: the intercept (p \< 2e-16), the linear log term `log_t` (p = 5.35e-06), and the quadratic term `log_t2` (p = 5e-04). The F-statistic of 328.5 on 2 and 26 degrees of freedom confirms that the model as a whole explains the data far better than an intercept-only baseline.
 
-**R² = 0.962** (adjusted 0.959) means the model accounts for \~96% of variance in log-transformed game counts — a strong fit for real-world count data. The residual standard error of 0.28 on the log scale translates to a typical multiplicative error of roughly e0.28≈1.32e^{0.28} \approx 1.32
-e0.28≈1.32, i.e. predictions are off by about ±32% on the original scale.
+**R² = 0.962** (adjusted 0.959) means the model accounts for \~96% of variance in log-transformed game counts — a strong fit for real-world count data. The residual standard error of 0.28 on the log scale translates to a typical multiplicative error of roughly e0.28≈1.32e\^{0.28} \approx 1.32 e0.28≈1.32, i.e. predictions are off by about ±32% on the original scale.
 
 **Overall conclusion:** the model fits well and all predictors are significant, but two assumptions — independence and homoscedasticity — are not fully met. Results should be interpreted as a descriptive trend model rather than a formal inferential one.
+
+```{r}
+library(GGally)
+
+steam_corr_log <- steam %>%
+  dplyr::select(Price, Positive_Percent, Median_playtime_forever, Peak_CCU) %>%
+  filter(if_all(everything(), ~ !is.nan(.) & !is.infinite(.) & !is.na(.))) %>%
+  mutate(across(everything(), ~ log1p(.)))
+
+ggpairs(
+  steam_corr_log,
+  columnLabels = c("log(Price)", "log(Positive %)", 
+                   "log(Med Playtime)", "log(Peak CCU)"),
+  lower = list(continuous = wrap("points", alpha = 0.15, size = 0.4,
+                                 color = "#4e79a7")),
+  diag  = list(continuous = wrap("densityDiag", fill = "#4e79a7",
+                                 alpha = 0.4, color = NA)),
+  upper = list(continuous = wrap("cor", size = 3.5, color = "#2c2c2c"))
+) +
+  labs(
+    title    = "Correlation matrix — Steam games (log1p scale)",
+    subtitle = "All variables transformed as log(x + 1)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title    = element_text(face = "bold", margin = margin(b = 4)),
+    plot.subtitle = element_text(color = "grey40", margin = margin(b = 10)),
+    strip.text    = element_text(size = 8),
+    axis.text     = element_text(size = 6)
+  )
+  )
+  
+```
+
+print(all_genres)
+
+```{r}
+priority_tags <- c(
+  "Action-Adventure",   # before Action and Adventure separately
+  "FPS",                # before Shooter (more specific)
+  "Bullet Hell",        # before Shooter
+  "Rogue-like",
+  "Visual Novel",
+  "Walking Simulator",
+  "Point & Click",
+  "Survival",
+  "Horror",
+  "Platformer",
+  "Shooter",
+  "Battle Royale",
+  "RPG",
+  "Strategy",
+  "Simulation",
+  "Clicker",
+  "Tower Defence",
+  "Immersive Sim",
+  "SimRacing",
+  "Management",
+  "Building",
+  "Sandbox",
+  "Puzzle",
+  "Card Game",
+  "Arcade",
+  "Sports",
+  "Anime",
+  "VR",
+  "Action",
+  "Adventure" # broadest — last resort
+)
+
+# Tags that overlap with Genres list for fallback
+genre_fallback <- c(
+  "Action-Adventure",  # not in Genres but check anyway
+  "RPG",
+  "Strategy",
+  "Simulation",
+  "Sports",
+  "Racing",            # in Genres as "Racing"
+  "Adventure",
+  "Action"
+)
+
+steam <- steam %>%
+  mutate(
+    Primary_tag = sapply(seq_len(nrow(steam)), function(i) {
+      t <- Tags[[i]]
+      g <- Genres[[i]]
+
+      # Step 1: try priority tags first
+      match_tag <- priority_tags[priority_tags %in% t]
+      if (length(match_tag) > 0) return(match_tag[1])
+
+      # Step 2: fallback to Genres using the same priority order
+      match_genre <- priority_tags[priority_tags %in% g]
+      if (length(match_genre) > 0) return(match_genre[1])
+
+      return(NA_character_)
+    }),
+    Primary_tag = factor(Primary_tag, levels = priority_tags)
+  )
+
+# Check new coverage
+steam %>%
+  count(Primary_tag, sort = TRUE) %>%
+  mutate(pct = round(100 * n / sum(n), 1)) %>%
+  print(n = Inf)
+
+cat("Games with no Primary_tag:", sum(is.na(steam$Primary_tag)), "\n")
+cat("Coverage:", round(100 * mean(!is.na(steam$Primary_tag)), 1), "%\n")
+
+```
+
+```{r}
+# --- Prepare regression data ------------------------------------------------
+steam_reg <- steam %>%
+  dplyr::select(Peak_CCU, Median_playtime_forever, Price, Primary_tag) %>%
+  filter(
+    !is.na(Primary_tag),
+    !is.na(Peak_CCU), Peak_CCU > 0,
+    !is.na(Median_playtime_forever), Median_playtime_forever > 0,
+    !is.na(Price)
+  ) %>%
+  mutate(
+    log_Peak_CCU     = log(Peak_CCU),
+    log_Med_Playtime = log(Median_playtime_forever),
+    is_free          = factor(Price == 0, labels = c("Paid", "Free")),
+    log_Price        = log1p(Price)
+  )
+
+cat("Observations used for regression:", nrow(steam_reg), "\n")
+
+# Fitting the model
+model_multi_reg <- lm(log_Peak_CCU ~ log_Med_Playtime + log_Price + is_free + Primary_tag,
+                data = steam_reg)
+
+summary(model_multi_reg)
+
+
+
+
+
+```
+
+```{r}
+plot(model_multi_reg)
+```
+
+```{r}
+steam_reg %>%
+  count(Primary_tag, name = "n_games") %>%
+  mutate(Primary_tag = fct_reorder(Primary_tag, n_games)) %>%
+  ggplot(aes(x = Primary_tag, y = n_games)) +
+  geom_col(fill = "#AF4570", width = 0.7) +
+  geom_text(
+    aes(label = n_games),
+    hjust = -0.2,
+    size  = 3.2,
+    fontface = "bold",
+    color = "#2c2c2c"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  coord_flip() +
+  labs(
+    title = "Number of games per genre 
+    ",
+    x     = "Genre",
+    y     = "Number of games"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    plot.title         = element_text(face = "bold", margin = margin(b = 10))
+  )
+```
