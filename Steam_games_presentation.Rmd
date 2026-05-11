@@ -1,6 +1,6 @@
 ---
 title: "Steam Games Dataset"
-author: "Mykyta Khrabust"
+author: "Mykyta Khrabust, Artem Vashchenko"
 output:
   ioslides_presentation:
     widescreen: true
