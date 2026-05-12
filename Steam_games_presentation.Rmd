@@ -19,6 +19,7 @@ library(lubridate)
 library(tidyr)
 library(forcats)
 library(ggplot2)
+library(GGally)
 ```
 
 # Wczytywanie i parsowanie datasetu
@@ -33,7 +34,22 @@ Zbiór danych zawiera informacje o grach wydanych na platformie Steam od czerwca
 
 W projekcie skupiliśmy się na analizie wybranych zmiennych jakościowych i ilościowych.
 
-## Wczytywanie i czyszczenie
+## Wczytywanie pliku
+
+```{r read, echo=TRUE}
+games <- read_csv("games.csv")
+games <- games %>%
+  dplyr::select(-c(`Required age`, `About the game`, `Reviews`, `Header image`,
+                   `Website`, `Support url`, `Support email`, `Metacritic url`,
+                   `Notes`, `Screenshots`, `Movies`, `Score rank`,`Full audio languages`,                     `Recommendations`,`Supported languages`,`User score`)) %>%
+  
+  rename_with(~ gsub(" ", "_", .x)) # replace " " with _ in column names for clearer access
+
+```
+
+## Parsowanie typów
+
+Funkcja pomocnicza
 
 ```{r load, echo=TRUE}
 parse_list_column <- function(x) {
@@ -51,34 +67,28 @@ parse_list_column <- function(x) {
 }
 ```
 
-```{r read, echo=TRUE}
-steam <- read_csv("games.csv")
-steam <- steam %>%
-  dplyr::select(-c(`Required age`, `About the game`, `Reviews`, `Header image`,
-                   `Website`, `Support url`, `Support email`, `Metacritic url`,
-                   `Notes`, `Screenshots`, `Movies`, `Score rank`)) %>%
-  rename_with(~ gsub(" ", "_", .x))
-cat("Wymiary:", nrow(steam), "wierszy ×", ncol(steam), "kolumn\n")
-```
-
-## Parsowanie typów
-
 ```{r parse, echo=TRUE}
-steam <- steam %>%
-  mutate(Windows = as.logical(Windows), Mac = as.logical(Mac), Linux = as.logical(Linux)) %>%
-  mutate(Release_date = mdy(Release_date)) %>%
-  mutate(across(c(Peak_CCU, Price, Discount, DLC_count, Metacritic_score, User_score,
-                  Positive, Negative, Achievements, Recommendations,
+games <- games %>%
+  mutate(Windows = as.logical(Windows), Mac = as.logical(Mac), Linux = as.logical(Linux))   %>%
+  mutate(Release_date = mdy(Release_date)) %>% # numeric
+  mutate(across(c(Peak_CCU, Price, Discount, DLC_count, Metacritic_score,
+                  Positive, Negative, Achievements,
                   Average_playtime_forever, Average_playtime_two_weeks,
                   Median_playtime_forever, Median_playtime_two_weeks), as.numeric)) %>%
-  mutate(Supported_languages  = parse_list_column(Supported_languages),
-         Full_audio_languages = parse_list_column(Full_audio_languages),
-         Developers           = parse_list_column(Developers),
+  mutate(Developers           = parse_list_column(Developers), # list processing
          Publishers           = parse_list_column(Publishers),
          Categories           = parse_list_column(Categories),
          Genres               = parse_list_column(Genres),
          Tags                 = parse_list_column(Tags)) %>%
-  mutate(Positive_Percent = 100 * Positive / (Positive + Negative))
+  mutate(Positive_Percent = 100 * Positive / (Positive + Negative)) # Adding new column
+```
+
+## Struktura datasetu
+
+```{r dataset-size}
+cat("Wymiary:", nrow(games), "wierszy ×", ncol(games), "kolumn\n")
+cat("Columny:\n", names(games))
+
 ```
 
 # Analiza opisowa
@@ -99,7 +109,7 @@ humanize_owner_est <- function(x) {
   paste0(fmt(parts[1]), "-", fmt(parts[2]))
 }
 
-steam_owners <- steam %>%
+steam_owners <- games %>%
   count(Estimated_owners, name = "n_games") %>%
   mutate(sort_lower_bound = as.numeric(sub("-.*", "", Estimated_owners)),
          Estimated_owners = fct_reorder(Estimated_owners, sort_lower_bound),
@@ -120,7 +130,7 @@ ggplot(steam_owners, aes(x = Steam_owners_human, y = n_games)) +
 ## Najpopularniejsze gry (100M–200M właścicieli)
 
 ```{r top-games}
-steam %>%
+games %>%
   filter(Estimated_owners == "100000000 - 200000000") %>%
   dplyr::select(Name, Estimated_owners, Price, Release_date)
 ```
@@ -129,8 +139,8 @@ steam %>%
 
 ## Rozkład % pozytywnych recenzji wg grupy właścicieli
 
-```{r violin-plot, fig.height=4, fig.width=10}
-steam_violin <- steam %>%
+```{r violin_df}
+steam_violin <- games %>%
   filter(!is.nan(Positive_Percent)) %>%
   mutate(lower_bound = as.numeric(sub("-.*", "", Estimated_owners)),
          Estimated_owners_human = sapply(as.character(Estimated_owners), humanize_owner_est),
@@ -139,7 +149,9 @@ steam_violin <- steam %>%
 ownership_stats <- steam_violin %>%
   group_by(Estimated_owners_human) %>%
   summarise(mean_pp = mean(Positive_Percent), median_pp = median(Positive_Percent), .groups = "drop")
+```
 
+```{r violin-plot, fig.height=4, fig.width=10, echo=FALSE}
 ggplot(steam_violin, aes(x = Estimated_owners_human, y = Positive_Percent)) +
   geom_violin(fill = "#45AF4B", alpha = 0.4, color = NA) +
   geom_boxplot(width = 0.1, fill = "white", color = "#2c2c2c", outlier.shape = NA) +
@@ -159,7 +171,7 @@ ggplot(steam_violin, aes(x = Estimated_owners_human, y = Positive_Percent)) +
 ## Liczba gier wydanych w poszczególnych latach
 
 ```{r yearly-plot, fig.height=4, fig.width=10}
-steam_by_year <- steam %>%
+steam_by_year <- games %>%
   filter(!is.na(Release_date)) %>%
   mutate(year = as.integer(format(Release_date, "%Y"))) %>%
   count(year, name = "n_games")
@@ -201,7 +213,7 @@ $$n\_games = e^a \cdot (period - 2011)^{p + q \cdot \log(period-2011)}$$
 
 ```{r trend-model-fit, include=FALSE}
 year_min <- 2011
-steam_by_halfyear <- steam %>%
+steam_by_halfyear <- games %>%
   filter(!is.na(Release_date)) %>%
   mutate(year = as.integer(format(Release_date, "%Y")),
          half = ifelse(as.integer(format(Release_date, "%m")) <= 6, 1, 2),
@@ -298,9 +310,7 @@ Wszystkie współczynniki wysoce istotne (p \< 0.001).
 ## Macierz korelacji (skala log1p)
 
 ```{r corr-matrix, fig.height=4.5, fig.width=9}
-library(GGally)
-
-steam_corr_log <- steam %>%
+steam_corr_log <- games %>%
   dplyr::select(Price, Positive_Percent, Median_playtime_forever, Peak_CCU) %>%
   filter(if_all(everything(), ~ !is.nan(.) & !is.infinite(.) & !is.na(.))) %>%
   mutate(across(everything(), ~ log1p(.)))
@@ -347,14 +357,14 @@ $$\log(\text{Peak_CCU}) = \beta_0 + \beta_1 \log(\text{Med_Playtime}) + \beta_2 
 
 Gatunek przypisany metodą priorytetową: najpierw Tags, fallback na Genres.
 
-```{r genre-setup, include=FALSE}
+```{r genre-setup}
 priority_tags <- c("Action-Adventure","FPS","Bullet Hell","Rogue-like","Visual Novel",
                    "Walking Simulator","Point & Click","Survival","Horror","Platformer",
                    "Shooter","Battle Royale","RPG","Strategy","Simulation","Clicker",
                    "Tower Defence","Immersive Sim","SimRacing","Management","Building",
                    "Sandbox","Puzzle","Card Game","Arcade","Sports","Anime","VR","Action","Adventure")
 
-steam <- steam %>%
+games <- games %>%
   mutate(Primary_tag = sapply(seq_len(nrow(steam)), function(i) {
     t <- Tags[[i]]; g <- Genres[[i]]
     match_tag <- priority_tags[priority_tags %in% t]
@@ -366,7 +376,7 @@ steam <- steam %>%
 ```
 
 ```{r genre-plot, fig.height=4, fig.width=9}
-steam %>%
+games %>%
   filter(!is.na(Primary_tag)) %>%
   count(Primary_tag, name = "n_games") %>%
   mutate(Primary_tag = fct_reorder(Primary_tag, n_games)) %>%
@@ -383,8 +393,8 @@ steam %>%
 
 ## Wyniki modelu regresji — zmienne ilościowe i is_free {.smaller}
 
-```{r reg-model, echo=FALSE}
-steam_reg <- steam %>%
+```{r reg-model}
+steam_reg <- games %>%
   dplyr::select(Name, Peak_CCU, Median_playtime_forever, Price, Primary_tag) %>%
   filter(!is.na(Primary_tag), !is.na(Peak_CCU), Peak_CCU > 0,
          !is.na(Median_playtime_forever), Median_playtime_forever > 0, !is.na(Price)) %>%
@@ -473,19 +483,18 @@ print(genre_df, row.names = FALSE)
 
 ## Badanie podstawowe
 
-Chcemy zbadać, z jakiego rozkładu pochodzą ceny. Zacznijmy od histogramu, aby spróbować zgadnąć, jaki rozkład może mieć nasza zmienna. 
+Chcemy zbadać, z jakiego rozkładu pochodzą ceny. Zacznijmy od histogramu, aby spróbować zgadnąć, jaki rozkład może mieć nasza zmienna.
 
 ```{r}
-games <- steam
-library(ggplot2)
 ggplot(games, aes(x=Price)) + geom_histogram(fill = "steelblue", color = "black", bins = 40)
 ```
 
 ## Skala logarytmiczna
-Widzimy, że na tym etapie nie otrzymujemy zbyt wielu informacji. Spróbujmy więc innego podejścia. Wiemy, że większość gier kosztuje od \$0 do \$100. Użyjmy skali logarytmicznej ($\log_{10}$), aby wartości \$1, \$10 i \$100 były w równej odległości od siebie – dzięki temu lepiej zobaczymy strukturę danych. Wykorzystamy funkcję $log1p$, która liczy $\log(1+x)$, ponieważ w zbiorze mamy gry darmowe ($0).
 
+Widzimy, że na tym etapie nie otrzymujemy zbyt wielu informacji. Spróbujmy więc innego podejścia. Wiemy, że większość gier kosztuje od \$0 do \$100. Użyjmy skali logarytmicznej ($\log_{10}$), aby wartości \$1, \$10 i \$100 były w równej odległości od siebie – dzięki temu lepiej zobaczymy strukturę danych. Wykorzystamy funkcję $log1p$, która liczy $\log(1+x)$, ponieważ w zbiorze mamy gry darmowe (\$0).
 
 ## Wykres logarytmiczny
+
 ```{r logscale, message=FALSE, warning=FALSE}
 library(scales)
 
@@ -498,17 +507,18 @@ ggplot(games, aes(x = Price)) +
        y = "Liczba gier")
 ```
 
-
 ## Wykres logarytmiczny
+
 Widzimy, że w skali logarytmicznej (po usunięciu gier bezpłatnych) rozkład cen przypomina rozkład normalny. Skoro dzieje się to w skali logarytmicznej, najprawdopodobniej mamy do czynienia z rozkładem log-normalnym. Dysponujemy dużym zbiorem danych (115 tys. obserwacji), więc aby sprawdzić naszą hipotezę, najlepiej będzie użyć wykresu kwantylowego (Q-Q plot). W tym celu zlogarytmujemy ceny i sporządzimy odpowiednie wykresy.
 
-
 ## Wykres kwantylowy
-```{r, echo=TRUE}
+
+```{r}
 paid_games <- games %>%
   filter(Price > 0) %>%
   mutate(log_price = log10(Price))
 ```
+
 ```{r}
 ggplot(paid_games, aes(sample = log_price)) +
   stat_qq(alpha = 0.5) +
@@ -519,14 +529,14 @@ ggplot(paid_games, aes(sample = log_price)) +
   theme_minimal()
 ```
 
-
 ## Wykres kwantylowy
-Widzimy, że prosta idealnie pokrywa się z danymi, poza samymi „ogonami”. Te ogony to bardzo niskie ceny (poniżej $1) oraz bardzo wysokie ($200–$1000). Te ostatnie nie są aż tak istotne, ponieważ niewielu deweloperów decyduje się na ustawienie tak wysokiej ceny.
+
+Widzimy, że prosta idealnie pokrywa się z danymi, poza samymi „ogonami”. Te ogony to bardzo niskie ceny (poniżej \$1) oraz bardzo wysokie (\$200–\$1000). Te ostatnie nie są aż tak istotne, ponieważ niewielu deweloperów decyduje się na ustawienie tak wysokiej ceny.
 
 Porównajmy wykresy kwantylowe z innymi rozkładami, aby upewnić się, że to dopasowanie jest najlepsze. Dobrym kandydatem jest rozkład Weibulla, który jest zbliżony do rozkładów gamma i log-normalnego. Wykorzystamy do tego bibliotekę $fitdistrplus$.
 
-
 ## Wykres kwantylowy
+
 ```{r, echo=TRUE, message=FALSE, warning=FALSE}
 library(fitdistrplus)
 library(patchwork)    # Przygotowanie kilku wykresów
@@ -543,8 +553,8 @@ fit_gamma   <- fitdist(prices, "gamma")
 fit_weibull <- fitdist(prices, "weibull")
 ```
 
-
 ## Wykres kwantylowy
+
 ```{r, echo=TRUE}
 # Funkcja pomocnicza do tworzenia wykresów kwantylowych
 make_qq_plot <- function(data, dist_name, q_func, params, title, aic_val) {
@@ -573,8 +583,8 @@ p_weib <- make_qq_plot(prices, "weibull", qweibull,
                        fit_weibull$aic)
 ```
 
-
 ## Wykres kwantylowy
+
 ```{r}
 #Ustawiamy wykresy w kwadracie
 (p_norm + p_log) / (p_gamma + p_weib) +
@@ -582,17 +592,18 @@ p_weib <- make_qq_plot(prices, "weibull", qweibull,
                   subtitle = "Niższa wartość AIC oznacza lepsze dopasowanie statystyczne.")
 ```
 
-
 ## Wykres kwantylowy
-Jak widać, model log-normalny dobrze przewiduje ceny w zakresie $1–$100. Stwórzmy więc wykres gęstości, estymując parametry naszego rozkładu metodą największej wiarygodności (MLE).
+
+Jak widać, model log-normalny dobrze przewiduje ceny w zakresie \$1–\$100. Stwórzmy więc wykres gęstości, estymując parametry naszego rozkładu metodą największej wiarygodności (MLE).
+
 ```{r, echo=TRUE}
 # Estymacja parametrów
 mean_log <- mean(paid_games$log_price)
 sd_log <- sd(paid_games$log_price)
 ```
 
-
 ## Gęstość rozkładu cen
+
 ```{r, warning=FALSE, error=FALSE}
 mean_dollar <- 10^mean_log
 sd_factor   <- 10^sd_log
@@ -629,9 +640,9 @@ annotate("text",
   theme_minimal()
 ```
 
-
 ## Gęstość rozkładu cen
-Dane wykazują tendencję do dopasowania do rozkładu log-normalnego. Pamiętajmy jednak, że ceny nie zmieniają się w sposób ciągły – widzimy wyraźne skoki przy najpopularniejszych wartościach ($0.99, $4.99, $9.99 itd.)
+
+Dane wykazują tendencję do dopasowania do rozkładu log-normalnego. Pamiętajmy jednak, że ceny nie zmieniają się w sposób ciągły – widzimy wyraźne skoki przy najpopularniejszych wartościach (\$0.99, \$4.99, \$9.99 itd.)
 
 Zobaczmy podstawowe statystyki na wykresie.
 
@@ -650,6 +661,7 @@ vlines <- data.frame(
 ```
 
 ## Gęstość rozkładu cen
+
 ```{r}
 ggplot(paid_games, aes(x = log_price)) +
   geom_histogram(aes(y = after_stat(density)), 
@@ -668,8 +680,8 @@ ggplot(paid_games, aes(x = log_price)) +
   theme_minimal()
 ```
 
-
 ## Dystrybuanta rozkładu
+
 Przez te skoki (punkty skupienia) trudniej zauważyć, że cena faktycznie ma rozkład log-normalny. Możemy jednak porównać dystrybuantę naszych danych z dystrybuantą teoretyczną.
 
 ```{r}
@@ -687,15 +699,16 @@ ggplot(paid_games, aes(x = Price)) +
        x = "Cena ($)", y = "Prawdopodobieństwo")
 ```
 
-
 ## Dystrybuanta rozkładu
-Widzimy bardzo dobre dopasowanie. Widać również skoki przy najpopularniejszych cenach ($1, $5, $7, $10). Ponieważ liczba obserwacji jest bardzo duża (115 tys.), wyznaczanie przedziałów ufności nie ma większego sensu – przy takiej skali zaczyna działać prawo wielkich liczb i przedziały byłyby ekstremalnie wąskie.
 
+Widzimy bardzo dobre dopasowanie. Widać również skoki przy najpopularniejszych cenach (\$1, \$5, \$7, \$10). Ponieważ liczba obserwacji jest bardzo duża (115 tys.), wyznaczanie przedziałów ufności nie ma większego sensu – przy takiej skali zaczyna działać prawo wielkich liczb i przedziały byłyby ekstremalnie wąskie.
 
 # Różne statystyki
 
 ## Liczba właściceli
+
 Mamy kolumnę \`Owner factor\`, która zawiera szacowaną liczbę właścicieli gier. Możemy przeprowadzić analizę opisową tej statystyki.
+
 ```{r, echo=TRUE, message=FALSE, warning=FALSE}
 library(tidyverse)
 
@@ -716,7 +729,9 @@ raw_levels <- c(
   "1000000000 - 2000000000"
 )
 ```
+
 ## Liczba właściceli
+
 ```{r, echo=TRUE}
 # 3. Function to turn "1000000 - 2000000" into "1M - 2M"
 format_short_range <- function(x) {
@@ -742,6 +757,7 @@ games_clean <- games_clean %>%
 ```
 
 ## Liczba właściceli
+
 ```{r}
 ggplot(games_clean, aes(x = Owners_Factor, y = Price, fill = Owners_Factor)) +
   geom_boxplot(outlier.shape = NA) + 
@@ -752,15 +768,19 @@ ggplot(games_clean, aes(x = Owners_Factor, y = Price, fill = Owners_Factor)) +
 ```
 
 ## Liczba właściceli
+
 Widzimy, że nie ma silnego związku między szacowaną liczbą właścicieli a ceną. Użyjmy testu Kruskala-Wallisa, aby zbadać niezależność tych statystyk.
 
 ```{r, echo=TRUE}
 kruskal.test(Price ~ Owners_Factor, data = games_clean)
 ```
+
 W rzeczywistości otrzymujemy tak niską wartość p-value głównie ze względu na bardzo dużą liczbę obserwacji. Stwórzmy mapę ciepła (heatmap), aby sprawdzić, czy faktycznie istnieje tam jakakolwiek zależność.
 
 ## Liczba właściceli
+
 Podział gier na grupy.
+
 ```{r,echo=TRUE}
 games_analysis <- games_clean %>%
   mutate(Price_Tier = cut(Price, 
@@ -773,6 +793,7 @@ prop_table <- prop.table(table(games_analysis$Price_Tier, games_analysis$Owners_
 ```
 
 ## Liczba właściceli
+
 ```{r}
 # Heatmap of percentages
 ggplot(as.data.frame(prop_table), aes(x = Var2, y = Var1, fill = Freq)) +
@@ -803,6 +824,7 @@ max_y <- ceiling(max(category_price_relation$median_price))
 ```
 
 ## Kategorie gier
+
 ```{r}
 ggplot(head(category_price_relation, 20), aes(x = reorder(category_list, median_price), y = median_price)) +
   geom_col(fill = "darkgreen") +
@@ -811,8 +833,8 @@ ggplot(head(category_price_relation, 20), aes(x = reorder(category_list, median_
   labs(title = "Top 20 najdroższych kategorii gier", x = "Kategoria", y = "Średnia cena ($)")
 ```
 
-
 ## Kategorie gier
+
 ```{r, echo=TRUE}
 kruskal.test(Price ~ category_list, data = games_clean)
 ```
@@ -820,6 +842,7 @@ kruskal.test(Price ~ category_list, data = games_clean)
 ## Liczbą rekomendacji
 
 Czy istnieje związek między ceną a liczbą rekomendacji?
+
 ```{r, echo=TRUE}
 price_breaks <- c(0, 5, 10, 20, 40, 60, 100, 1000)
 price_labels <- c("$0-$5", "$5-$10", "$10-$20", "$20-$40", "$40-$60", "$60-$100", "$100-$1000")
@@ -838,14 +861,15 @@ price_analysis <- games_clean %>%
 ```
 
 ## Liczbą rekomendacji
+
 ```{r}
 print(price_analysis)
 ```
 
-
 ## Publishers
 
 Analiza czołowych wydawców gier
+
 ```{r, echo=TRUE}
 top_publishers <- games_clean %>%
   count(Publishers, sort = TRUE) %>%
@@ -856,7 +880,9 @@ top_publishers <- games_clean %>%
 Ten kod zlicza, jak często występuje dany wydawca.
 
 ## Publishers
+
 Wymagane jest dodatkowe formatowanie danych.
+
 ```{r, echo=TRUE}
 library(tidyverse)
 
@@ -883,11 +909,13 @@ publishers_clean <- paid_games %>%
 ```
 
 ## Publishers
+
 ```{r, echo=TRUE}
 top_20_publishers <- publishers_clean %>%
   count(publisher_list, sort = TRUE) %>%
   head(20)
 ```
+
 ```{r}
 # 3. Plot
 ggplot(top_20_publishers, aes(x = reorder(publisher_list, n), y = n)) +
@@ -904,8 +932,8 @@ ggplot(top_20_publishers, aes(x = reorder(publisher_list, n), y = n)) +
   theme_minimal()
 ```
 
-
 ## Publishers
+
 ```{r}
 # Quick check of top publisher pricing strategies
 publishers_clean %>%
