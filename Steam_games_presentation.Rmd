@@ -135,7 +135,7 @@ games %>%
   dplyr::select(Name, Estimated_owners, Price, Release_date)
 ```
 
-> Dokładność klasyfikacji do grup nie wynosi 100% — jest to ograniczenie metody Steam Spy. Akceptujemy ten fakt ze względu na brak lepszej alternatywy.
+> Dokładność klasyfikacji do grup nie wynosi 100% – jest to ograniczenie metody Steam Spy. Akceptujemy ten fakt ze względu na brak lepszej alternatywy.
 
 ## Rozkład % pozytywnych recenzji wg grupy właścicieli
 
