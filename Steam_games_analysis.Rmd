@@ -13,7 +13,17 @@ output:
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```
 
-## Libraries
+## O datasecie
+
+Zbiór danych zawiera informacje o grach wydanych na platformie Steam od czerwca 1997 r. do połowy marca 2026 r.
+
+Surowy zbiór danych w formacie CSV zajmuje 390 megabajtów i zawiera 39 kolumn z informacjami o grze, takimi jak nazwa, data releasu, wydawca, deweloper, obsługiwane języki, oceny na Metacritic i w sklepie Steam oraz wiele innych.
+
+W naszym projekcie skupiliśmy się na analizie tylko kilku zmiennych jakościowych i ilościowych.
+
+Zgodnie z opisem dane zostały zebrane za pomocą Steam API i Steam Spy
+
+## Biblioteki
 
 ```{r libraries}
 library(readr)
@@ -26,11 +36,17 @@ library(ggplot2)
 
 ------------------------------------------------------------------------
 
-# Parsing the table
+# Wczytywanie i parsowanie datasetu
 
-## Helper function
+## Funkcja pomocnicza
 
-Parse Python-style bracket lists **and** plain comma-separated strings into R character vectors.
+Przetwarzanie
+
+-   Python'owych ["...","..."] - kolumny Supported_languages, Full_voice_languages
+
+-   Zwykłych ciągów znaków rozdzielonych przecinkami ...,...,... - kolumny Genres, Categories, Tags
+
+na R'owe wektory znaków.
 
 ```{r helper}
 # "['English', 'French']"  →  c("English", "French")
@@ -54,51 +70,56 @@ parse_list_column <- function(x) {
 }
 ```
 
-## Read raw CSV
+## Wczytywanie surowego datasetu games.csv
 
-All columns are read as `character` first to avoid silent type coercion.
+```{r, echo=FALSE, warning=FALSE, error=FALSE}
+# Read raw CSV
+steam <- read_csv("games.csv")
 
-```{r read}
-raw <- read_csv(
-  "games_trimmed.csv",                                  
-  col_types   = cols(.default = col_character()),
-  show_col_types = FALSE
-)
+# Drop unnecessary columns
+steam <- steam %>%
+  dplyr::select(-c(`Required age`, `About the game`, `Reviews`, `Header image`,
+                   `Website`, `Support url`, `Support email`, `Metacritic url`,
+                   `Notes`, `Screenshots`, `Movies`, `Score rank`))
+
+# Rename all columns: replace spaces with underscores
+steam <- steam %>%
+  rename_with(~ gsub(" ", "_", .x))
+
+# Sanity check
+cat("Dimensions:", nrow(steam), "rows ×", ncol(steam), "columns\n")
+names(steam)
 ```
 
-```{r}
-cat(nrow(raw), "rows ×", ncol(raw), "columns\n")
-```
+## Parsowanie i czyszczenie
 
-## Parse & clean
-
-Values in Estimated.owners are kept as-is as they are just meant to represent vague groups
+Wartości w tabeli „Estimated.owners” pozostają bez zmian, ponieważ mają one jedynie odzwierciedlać ogólne grupy
 
 ```{r}
-unique(raw$Estimated_owners)
+unique(steam$Estimated_owners)
 ```
 
 ```{r parse}
-steam <- raw %>%
+steam <- steam %>%
 
-  # --- Platform columns: character → logical (TRUE / FALSE) ------------------
+  # Platform columns: character → logical (TRUE / FALSE) 
   mutate(
     Windows = as.logical(Windows),
     Mac     = as.logical(Mac),
     Linux   = as.logical(Linux)
   ) %>%
 
-  # --- Release date: "Oct 15, 2019" → Date -----------------------------------
+  # Release date: "Oct 15, 2019" → Date
   mutate(
     `Release_date` = mdy(`Release_date`)
   ) %>%
 
-  # --- Numeric columns -------------------------------------------------------
+  # Numeric columns 
   mutate(
     across(
       c(`Peak_CCU`, Price, Discount, `DLC_count`,
         `Metacritic_score`, `User_score`,
-        Positive, Negative, `Score_rank`,
+        Positive, Negative,
         Achievements, Recommendations,
         `Average_playtime_forever`, `Average_playtime_two_weeks`,
         `Median_playtime_forever`,  `Median_playtime_two_weeks`),
@@ -106,7 +127,7 @@ steam <- raw %>%
     )
   ) %>%
 
-  # --- List-columns ----------------------------------------------------------
+  # List-columns
   # Each cell becomes a character vector; the column becomes a list-column
   mutate(
     `Supported_languages`  = parse_list_column(`Supported_languages`),
@@ -119,54 +140,9 @@ steam <- raw %>%
   )
 ```
 
-## Column types
+## Dodanie nowej kolumny: % pozytywnych recenzji
 
-```{r types}
-data.frame(
-  column = names(steam),
-  type   = sapply(steam, function(x) paste(class(x), collapse = " / "))
-)
-```
-
-## Working with list-columns
-
-### Tag count per game
-
-```{r tag-count}
-steam <- steam %>%
-  mutate(n_tags = lengths(Tags))
-
-steam %>%
-  select(Name, n_tags) %>%
-  arrange(desc(n_tags)) %>%
-  head(10)
-```
-
-### Filter by tag
-
-```{r filter-tag}
-steam %>%
-  filter(sapply(Tags, function(t) "RPG" %in% t)) %>%
-  select(Name, `Release_date`, Price, n_tags) %>%
-  head(10)
-```
-
-### Unnest to long format (for frequency analysis)
-
-```{r unnest, eval=FALSE}
-
-
-steam_tags_long <- steam %>%
-  select(AppID, Name, Tags) %>%
-  unnest(Tags)
-
-# Most common tags across the dataset
-steam_tags_long %>%
-  count(Tags, sort = TRUE) %>%
-  head(20)
-```
-
-## Adding % of positive reviews column
+Dla gier bez żadnych recenzji ta wartość pozostaje nieokreślona. Niestety przy w podalszej analizie mamy odfiltrować takie gry z puli.
 
 ```{r}
 steam <- steam %>%
@@ -174,13 +150,10 @@ steam <- steam %>%
 
 ```
 
-------------------------------------------------------------------------
-
-# Part A : Basic characteristics of the dataset
-
-## Estimated ownership
+## Prosty wgłąd w dane: grupy Estimated ownership
 
 ```{r}
+# A simple function which makes Estimated ownership replacing multiple zeros with order letters, ex. 1000000 -> 1M, 20000 -> 20K
 humanize_owner_est <- function(x) {
       parts <- strsplit(x, "-")[[1]]
       format_num <- function(n) {
@@ -210,6 +183,8 @@ steam_owners <- steam %>%
 
 ```
 
+## Rozkład liczby gier w zależności od grupy Estimated ownership
+
 ```{r}
 ggplot(steam_owners, aes(x = Steam_owners_human, y = n_games)) +
   geom_col(fill = "#7040BF", width = 0.7) +
@@ -236,11 +211,19 @@ ggplot(steam_owners, aes(x = Steam_owners_human, y = n_games)) +
   )
 ```
 
+## Najpopularniejsze gry
+
 ```{r}
 steam %>%
   filter(Estimated_owners == "100000000 - 200000000") %>%
   select(Name, Estimated_owners, Price, Release_date)
 ```
+
+Niestety, dokładność określenia, do której grupy należy dana gra, nie wynosi 100%. Ręczna analiza wizualna zbioru danych wykazała, że czasami gra może zostać zaklasyfikowana do grupy, która nie odpowiada jej rzeczywistej popularności.
+
+Akceptujemy jednak ten fakt, ponieważ po prostu nie mamy lepszego sposobu tej oceny.
+
+## Rozkład % pozytywnych recenzji dla grup Estimated ownership
 
 ```{r}
 steam_violin <- steam %>%
@@ -286,7 +269,7 @@ ggplot(steam_violin, aes(x = Estimated_owners_human, y = Positive_Percent)) +
   )
 ```
 
-## Number of games by year
+## Liczba gier wydanych w poszczególnych latach (stan na połowę marca 2026 r.)
 
 ```{r}
 # Count games per release year, drop rows with missing dates
@@ -321,6 +304,14 @@ ggplot(steam_by_year, aes(x = year, y = n_games)) +
     plot.title     = element_text(face = "bold", margin = margin(b = 12))
   )
 ```
+
+## Proba dopasowania funkcji trendu używając regresji liniowej
+
+Przeanalizowano gry wydane w okresie od połowy 2011 roku do 2025 roku. Releasy zostały pogrupowane według półroczy.
+
+Model dopasowano w przestrzeni log-log przy użyciu wielomianu kwadratowego:
+
+$$\log(n\_games) = a + p \cdot \log(t) + q \cdot \log^2(t), \quad t = \text{period} - 2011$$
 
 ```{r}
 year_min <- 2011
@@ -377,7 +368,23 @@ pred_df <- steam_by_halfyear %>%
                                newdata = data.frame(log_t  = log_t,
                                                     log_t2 = log_t2)))
   )
+```
 
+### Wzór
+
+```{r}
+a <- exp(coef(model_games_by_half_year)[["(Intercept)"]])
+p <- coef(model_games_by_half_year)[["log_t"]]
+q <- coef(model_games_by_half_year)[["log_t2"]]
+
+cat("Fitted model formula:\n")
+cat(sprintf(
+  "n_games = %.4f * (period - %d) ^ (%.4f + %.4f * log(period - %d))\n",
+  a, year_min, p, q, year_min
+))
+```
+
+```{r}
 ggplot() +
   geom_ribbon(
     data  = pred_ci,
@@ -415,18 +422,6 @@ ggplot() +
   )
 ```
 
-```{r}
-a <- exp(coef(model_half)[["(Intercept)"]])
-p <- coef(model_half)[["log_t"]]
-q <- coef(model_half)[["log_t2"]]
-
-cat("Fitted model formula:\n")
-cat(sprintf(
-  "n_games = %.4f * (period - %d) ^ (%.4f + %.4f * log(period - %d))\n",
-  a, year_min, p, q, year_min
-))
-```
-
 ### Diagnostyka modelu
 
 ```{r}
@@ -434,48 +429,26 @@ summary(model_games_by_half_year)
 
 ```
 
+### Przedziały ufności dla parametrów
+
 ```{r}
 confint(model_games_by_half_year)
 ```
 
+### Wykresy diagnostyczne
+
 ```{r}
-plot(model_games_by_half_year)
-# par(mfrow = c(2, 2)); plot(model_games_by_half_year); par(mfrow = c(1, 1))
+# plot(model_games_by_half_year)
+par(mfrow = c(2, 2)); plot(model_games_by_half_year); par(mfrow = c(1, 1))
 ```
 
 ```{r}
 # See which periods the outlier rows correspond to
-influential <- c(1, 2, 3)   # replace with the numbers you see on the plots
+influential <- c(1, 2, 3,4)
 train_half[influential, ]
 ```
 
-### Model diagnostics summary
-
-The model was fit in log-log space using a quadratic polynomial:
-
-$$\log(n\_games) = a + p \cdot \log(t) + q \cdot \log^2(t), \quad t = \text{period} - 2011$$
-
-estimated on half-yearly Steam release counts from 2011.5 to 2025.5 (n = 29).
-
-**LINE assumptions:**
-
--   **Linearity.** *Residuals vs Fitted* shows the red line close to zero across most of the fitted range with no pronounced curve, suggesting the quadratic log-log transformation adequately captures the trend. A mild downward slope at the right tail indicates slight overestimation in the most recent periods.
-
--   **Independence.** Observations are aggregated half-year counts from a single growing platform — consecutive periods are likely positively correlated (more developers join every year). Formal independence cannot be claimed; a time-series model would be more appropriate if serial correlation is a concern.
-
--   **Normality.** The *Q-Q plot* shows most points tracking the diagonal well in the central range. Points 1 and 4 deviate noticeably in both tails, indicating heavier-than-normal tails. With n = 29 this is a moderate concern but not critical for inference given the large F-statistic.
-
--   **Equal variance (homoscedasticity).** *Scale-Location* shows a declining trend — residual spread is larger for small fitted values (early periods) and shrinks toward recent years. This is a mild violation of homoscedasticity. Point 4 (visible in all four panels) is the primary driver.
-
-**Point 4** (identifiable via `train_half[4, ]`) appears as an influential outlier across all diagnostic plots and sits beyond Cook's distance boundary in *Residuals vs Leverage*. It corresponds to an early period with anomalously low releases relative to the fitted trend and meaningfully affects the coefficient estimates.
-
-**Coefficients and model fit:**
-
-All three coefficients are highly significant: the intercept (p \< 2e-16), the linear log term `log_t` (p = 5.35e-06), and the quadratic term `log_t2` (p = 5e-04). The F-statistic of 328.5 on 2 and 26 degrees of freedom confirms that the model as a whole explains the data far better than an intercept-only baseline.
-
-**R² = 0.962** (adjusted 0.959) means the model accounts for \~96% of variance in log-transformed game counts — a strong fit for real-world count data. The residual standard error of 0.28 on the log scale translates to a typical multiplicative error of roughly e0.28≈1.32e\^{0.28} \approx 1.32 e0.28≈1.32, i.e. predictions are off by about ±32% on the original scale.
-
-**Overall conclusion:** the model fits well and all predictors are significant, but two assumptions — independence and homoscedasticity — are not fully met. Results should be interpreted as a descriptive trend model rather than a formal inferential one.
+## Macierz korelacji
 
 ```{r}
 library(GGally)
@@ -506,11 +479,11 @@ ggpairs(
     strip.text    = element_text(size = 8),
     axis.text     = element_text(size = 6)
   )
-  )
+
   
 ```
 
-print(all_genres)
+## Wybór jednego gatunku na grę
 
 ```{r}
 priority_tags <- c(
@@ -588,10 +561,16 @@ cat("Coverage:", round(100 * mean(!is.na(steam$Primary_tag)), 1), "%\n")
 
 ```
 
+## Regresja wzgłędem kilku zmiennych zarówno ilościowych, jak i jakościowych
+
+Do analizy czynników wpływających na popularność gier na platformie Steam zastosowano **log-liniowy model regresji wielorakiej** (ang. *log-log multiple linear regression*). Model przyjmuje postać:
+
+$$\log(Peak\_CCU) = \beta_0 + \beta_1 \log(Med\_Playtime) + \beta_2 \log(Price) + \beta_3 \cdot \mathbb{1}[Free] + \sum_k \gamma_k \cdot \mathbb{1}[Genre_k] + \varepsilon$$
+
 ```{r}
-# --- Prepare regression data ------------------------------------------------
+# Prepare regression data
 steam_reg <- steam %>%
-  dplyr::select(Peak_CCU, Median_playtime_forever, Price, Primary_tag) %>%
+  dplyr::select(Name,Peak_CCU, Median_playtime_forever, Price, Primary_tag) %>%
   filter(
     !is.na(Primary_tag),
     !is.na(Peak_CCU), Peak_CCU > 0,
@@ -607,26 +586,15 @@ steam_reg <- steam %>%
 
 cat("Observations used for regression:", nrow(steam_reg), "\n")
 
-# Fitting the model
-model_multi_reg <- lm(log_Peak_CCU ~ log_Med_Playtime + log_Price + is_free + Primary_tag,
-                data = steam_reg)
-
-summary(model_multi_reg)
-
-
-
-
-
 ```
 
-```{r}
-plot(model_multi_reg)
-```
+### Liczba gier dla każdego gatunku w wybranym podzbiorze
 
 ```{r}
 steam_reg %>%
   count(Primary_tag, name = "n_games") %>%
   mutate(Primary_tag = fct_reorder(Primary_tag, n_games)) %>%
+  
   ggplot(aes(x = Primary_tag, y = n_games)) +
   geom_col(fill = "#AF4570", width = 0.7) +
   geom_text(
@@ -650,4 +618,84 @@ steam_reg %>%
     panel.grid.minor   = element_blank(),
     plot.title         = element_text(face = "bold", margin = margin(b = 10))
   )
+```
+
+## Wyniki modelu
+
+```{r}
+
+steam_reg <- steam_reg %>%
+  mutate(Primary_tag = relevel(Primary_tag, ref = "RPG"))
+
+# Fitting the model
+model_multi_reg <- lm(log_Peak_CCU ~ log_Med_Playtime + log_Price + is_free + Primary_tag,
+                data = steam_reg)
+summary(model_multi_reg)
+```
+
+### Wykresy diagnostyczne
+
+```{r}
+par(mfrow = c(2, 2)); plot(model_multi_reg); par(mfrow = c(1, 1))
+```
+
+### Największe outliery
+
+```{r}
+# See which periods the outlier rows correspond to
+influential <- c(11566,3040,7828)
+steam_reg[influential, ]
+```
+
+### Wzór i Współczynniki
+
+```{r}
+# Extract coefficients
+coefs <- coef(model_multi_reg)
+
+# Helper: format a coefficient as "+ x.xxxx" or "- x.xxxx"
+fmt <- function(x, digits = 4) {
+  sign_str <- ifelse(x >= 0, " + ", " - ")
+  paste0(sign_str, round(abs(x), digits))
+}
+
+# Build the formula string in log space
+log_formula <- paste0(
+  "log(Peak_CCU) = ", round(coefs["(Intercept)"], 4),
+  fmt(coefs["log_Med_Playtime"]), " * log(Med_Playtime)",
+  fmt(coefs["log_Price"]),        " * log1p(Price)",
+  fmt(coefs["is_freeFree"]),      " * is_free",
+  "\n             + γ_genre  (genre-specific intercept shift)"
+)
+
+# Back-transformed formula for Peak_CCU itself
+back_formula <- paste0(
+  "Peak_CCU = exp(", round(coefs["(Intercept)"], 4), ")",
+  " * Med_Playtime^", round(coefs["log_Med_Playtime"], 4),
+  " * Price^",        round(coefs["log_Price"], 4),
+  " * exp(",          round(coefs["is_freeFree"], 4), " * is_free)",
+  "\n         * exp(γ_genre)"
+)
+
+# Genre shifts table
+genre_coefs <- coefs[grepl("Primary_tag", names(coefs))]
+genre_df <- data.frame(
+  Genre       = gsub("Primary_tag", "", names(genre_coefs)),
+  gamma       = round(genre_coefs, 4),
+  multiplier  = round(exp(genre_coefs), 4)   # exp(γ) = multiplicative effect
+) %>%
+  arrange(desc(gamma))
+
+cat("Formula in log space\n")
+cat(log_formula, "\n\n")
+
+cat("Back-transformed formula (original scale)\n")
+cat(back_formula, "\n\n")
+
+cat("Genre multipliers relative to Action-Adventure\n")
+print(genre_df, row.names = FALSE)
+```
+
+```{r}
+sum(!is.nan(steam$Positive_Percent))
 ```

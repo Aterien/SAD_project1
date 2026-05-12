@@ -30,9 +30,7 @@ Na początek przygotowałem krótki wgłąd w dane.
 
 Widzymy rozkład liczby gier
 
-Dokładność klasyfikacji do grup nie wynosi 100% — jest to ograniczenie
-metody Steam Spy. Akceptujemy ten fakt ze względu na brak lepszej
-alternatywy.
+Dokładność klasyfikacji do grup nie wynosi 100% — jest to ograniczenie metody Steam Spy. Akceptujemy ten fakt ze względu na brak lepszej alternatywy.
 
 ## Regresja liniowa czasu
 
@@ -58,13 +56,13 @@ Taka własnie transformacja była w stanie dać sensowną predykcję.
 
 **Point 1** (identifiable via `train_half[4, ]`) appears as an influential outlier across all diagnostic plots and sits beyond Cook's distance boundary in *Residuals vs Leverage*. It corresponds to an early period with anomalously low releases relative to the fitted trend and meaningfully affects the coefficient estimates.
 
-**Coefficients and model fit:**
+**Współczynniki i dopasowanie modelu:**
 
-All three coefficients are highly significant: the intercept (p \< 2e-16), the linear log term `log_t` (p = 5.35e-06), and the quadratic term `log_t2` (p = 5e-04). The F-statistic of 328.5 on 2 and 26 degrees of freedom confirms that the model as a whole explains the data far better than an intercept-only baseline.
+Wszystkie trzy współczynniki są wysoce istotne: stała (p \< 2e-16), liniowy człon logarytmiczny log_t (p = 5,35e-06) oraz człon kwadratowy log_t² (p = 5e-04). Statystyka F wynosząca 328,5 przy 2 i 26 stopniach swobody potwierdza, że model jako całość wyjaśnia dane znacznie lepiej niż model bazowy zawierający jedynie punkt przecięcia.
 
-**R² = 0.962** (adjusted 0.959) means the model accounts for \~96% of variance in log-transformed game counts — a strong fit for real-world count data. The residual standard error of 0.28 on the log scale translates to a typical multiplicative error of roughly e0.28≈1.32e\^{0.28} \approx 1.32 e0.28≈1.32, i.e. predictions are off by about ±32% on the original scale.
+R² = 0,962 (skorygowane 0,959) oznacza, że model wyjaśnia \~96% wariancji w logarytmicznie przekształconych liczbach gier — jest to dobre dopasowanie do rzeczywistych danych liczbowych. Standardowy błąd resztowy wynoszący 0,28 w skali logarytmicznej przekłada się na typowy błąd multiplikatywny wynoszący w przybliżeniu e0,28≈1,32e\^{0,28} \\approx 1,32 e0,28≈1,32, tzn. prognozy są niedokładne o około ±32% w skali pierwotnej.
 
-**Overall conclusion:** the model fits well and all predictors are significant, but two assumptions — independence and homoscedasticity — are not fully met.
+**Ogólny wniosek:** model dobrze pasuje, a wszystkie zmienne prognostyczne są istotne, ale dwa założenia — niezależność i homoscedastyczność — nie są w pełni spełnione.
 
 **Wyniki należy interpretować raczej jako opisowy model trendu, a nie jako formalny model wnioskowania.**
 
@@ -175,7 +173,7 @@ Wykres *Residuals vs Leverage* pokazuje kolumnową strukturę punktów — efekt
 Patrząc na współczynniki, największy wpływ mają:
 
 | Zmienna | Współczynnik | Interpretacja |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | `is_freeFree` | **+2.167**\* | Gry F2P mają \~8.7× wyższy Peak CCU niż płatne przy pozostałych czynnikach stałych — najsilniejszy efekt w modelu |
 | `log_Price` | +0.544\*\*\* | Elastyczność ceny: droższe gry przyciągają więcej graczy jednocześnie |
 | `log_Med_Playtime` | +0.451\*\*\* | Gry angażujące na dłużej mają wyższy CCU |
