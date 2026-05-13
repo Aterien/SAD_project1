@@ -202,3 +202,9 @@ Nie stwierdzono istotnej statystycznie różnicy w medianie czasu gry pomiędzy 
 ### Test chi-kwadrat (Estimated owners vs Type)
 
 Wykazano istotną zależność pomiędzy typem gry a kategorią liczby właścicieli (p \< 0.001). Oznacza to, że rozkład liczby właścicieli różni się w zależności od typu gry.
+
+## Korelacja
+
+Wyniki wskazują na umiarkowaną dodatnią korelację między ocenami graczy a ocenami krytyków. Zarówno współczynnik Pearsona (r ≈ 0.60), jak i Spearmana (ρ ≈ 0.58) są statystycznie istotne, co oznacza, że wyższe oceny Metacritic zazwyczaj odpowiadają wyższemu odsetkowi pozytywnych recenzji graczy.
+
+Nie jest to korelacja idealna, ewidentnie gracze i krytycy nie zawsze są zgodni.
