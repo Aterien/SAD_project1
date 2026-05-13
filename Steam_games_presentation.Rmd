@@ -28,16 +28,21 @@ library(GGally)
 
 Zbiór danych zawiera informacje o grach wydanych na platformie Steam od czerwca 1997 r. do połowy marca 2026 r.
 
--   Surowy plik CSV: **390 MB**, **39 kolumn**
--   Informacje o grach: nazwa, data premiery, wydawca, deweloper, obsługiwane języki, oceny Metacritic i Steam i inne
+-   Żródło: <https://www.kaggle.com/datasets/ebrucakar/steam-games-dataset-march-2026>
+
+-   Surowy plik CSV: **390 MB**, **40 kolumn, 115289 wierszy**
+
+-   Informacje o grach: nazwa, data premiery, wydawca, deweloper, obsługiwane języki, oceny Metacritic oraz Steam i inne
+
 -   Dane zebrane za pomocą **Steam API** i **Steam Spy**
 
-W projekcie skupiliśmy się na analizie wybranych zmiennych jakościowych i ilościowych.
+W tym projekcie skupiliśmy się na analizie wybranych zmiennych jakościowych i ilościowych.
 
-## Wczytywanie pliku
+## Wczytywanie pliku i wybór kolumn
 
 ```{r read, echo=TRUE}
 games <- read_csv("games.csv")
+cat("Wymiary przed czyszczeniem:", nrow(games), "wierszy ×", ncol(games), "kolumn\n")
 games <- games %>%
   dplyr::select(-c(`Required age`, `About the game`, `Reviews`, `Header image`,
                    `Website`, `Support url`, `Support email`, `Metacritic url`,
@@ -47,9 +52,7 @@ games <- games %>%
 
 ```
 
-## Parsowanie typów
-
-Funkcja pomocnicza
+## Funkcja pomocnicza do parsowania kolumn z Python'owymi listami
 
 ```{r load, echo=TRUE}
 parse_list_column <- function(x) {
@@ -66,6 +69,8 @@ parse_list_column <- function(x) {
   })
 }
 ```
+
+## Parsowanie typów
 
 ```{r parse, echo=TRUE}
 games <- games %>%
@@ -87,7 +92,7 @@ games <- games %>%
 
 ```{r dataset-size}
 cat("Wymiary:", nrow(games), "wierszy ×", ncol(games), "kolumn\n")
-cat("Columny:\n", names(games))
+cat("Zostawione kolumny:\n", names(games))
 
 ```
 
@@ -95,7 +100,7 @@ cat("Columny:\n", names(games))
 
 ## Rozkład gier wg grup Estimated Owners {.smaller}
 
-```{r owners-plot, fig.height=4, fig.width=10}
+```{r humanize_owner}
 humanize_owner_est <- function(x) {
   parts <- strsplit(x, "-")[[1]]
   fmt <- function(n) {
@@ -115,7 +120,11 @@ steam_owners <- games %>%
          Estimated_owners = fct_reorder(Estimated_owners, sort_lower_bound),
          Steam_owners_human = sapply(as.character(Estimated_owners), humanize_owner_est),
          Steam_owners_human = fct_reorder(Steam_owners_human, sort_lower_bound))
+```
 
+## Rozkład gier wg grup Estimated Owners {.smaller}
+
+```{r owners-plot, fig.height=4, fig.width=10}
 ggplot(steam_owners, aes(x = Steam_owners_human, y = n_games)) +
   geom_col(fill = "#7040BF", width = 0.7) +
   geom_text(aes(label = n_games), vjust = -0.5, size = 3, fontface = "bold", color = "#2c2c2c") +
@@ -330,7 +339,7 @@ ggpairs(steam_corr_log,
 ## Wnioski z macierzy korelacji {.smaller}
 
 | Para zmiennych | Korelacja | Interpretacja |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | log(Med Playtime) ↔ log(Peak CCU) | **0.560**\* | Najsilniejsza zależność — gry angażujące dłużej mają więcej graczy jednocześnie |
 | log(Price) ↔ log(Peak CCU) | 0.242\*\*\* | Droższe gry przyciągają więcej graczy — efekt jakości AAA |
 | log(Price) ↔ log(Med Playtime) | 0.247\*\*\* | Droższe gry oferują więcej contentu |
@@ -365,7 +374,7 @@ priority_tags <- c("Action-Adventure","FPS","Bullet Hell","Rogue-like","Visual N
                    "Sandbox","Puzzle","Card Game","Arcade","Sports","Anime","VR","Action","Adventure")
 
 games <- games %>%
-  mutate(Primary_tag = sapply(seq_len(nrow(steam)), function(i) {
+  mutate(Primary_tag = sapply(seq_len(nrow(games)), function(i) {
     t <- Tags[[i]]; g <- Genres[[i]]
     match_tag <- priority_tags[priority_tags %in% t]
     if (length(match_tag) > 0) return(match_tag[1])
@@ -380,6 +389,7 @@ games %>%
   filter(!is.na(Primary_tag)) %>%
   count(Primary_tag, name = "n_games") %>%
   mutate(Primary_tag = fct_reorder(Primary_tag, n_games)) %>%
+  
   ggplot(aes(x = Primary_tag, y = n_games)) +
   geom_col(fill = "#AF4570", width = 0.7) +
   geom_text(aes(label = n_games), hjust = -0.2, size = 2.8, fontface = "bold", color = "#2c2c2c") +
@@ -469,7 +479,7 @@ print(genre_df, row.names = FALSE)
 ## **Kluczowe wartości:**
 
 | Miara | Wartość | Interpretacja |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | R² | 0.200 | Model wyjaśnia 20% wariancji Peak CCU |
 | Residual SE | 1.873 (log) | Typowy błąd ≈ $e^{1.873}$ ≈ **6.5×** na oryginalnej skali |
 | F-statistic | 113.1 (p \< 2.2e-16) | Model istotnie lepszy niż sama średnia |
@@ -478,3 +488,41 @@ print(genre_df, row.names = FALSE)
 **Najsilniejsze efekty:** `is_free` \> `log_Price` \> `log_Med_Playtime` \> gatunek (`VR`: −1.62, `FPS`: +0.57)
 
 **Wniosek:** Model poprawnie identyfikuje kierunki zależności, lecz jego zdolność predykcyjna jest ograniczona. Popularność gry zależy w dużej mierze od czynników nieobecnych w danych — budżetu marketingowego, marki wydawcy, momentu premiery.
+
+# Kategorie gier
+
+```{r, echo=TRUE}
+category_price_relation <- games %>%
+  filter(Price > 0,!is.na(Primary_tag)) %>%
+  group_by(Primary_tag) %>%
+  summarise(
+    median_price = median(Price),
+    count = n()
+  ) %>%
+  filter(count > 100) %>% # Ignore rare categories
+  arrange(desc(median_price))
+
+max_y <- ceiling(max(category_price_relation$median_price))
+```
+
+## Cena a gatunek
+
+```{r price_genre_plot, fig.height=4, fig.width=9}
+ggplot(category_price_relation, aes(x = reorder(Primary_tag, median_price), y = median_price)) +
+  geom_col(fill = "#3C979C") +
+  coord_flip() +
+  scale_y_continuous(breaks = seq(0, max_y, by = 1)) +
+  labs(title = "Średnia cena w zależności od gatunku", x = "Gatunek", y = "Średnia cena ($)") + theme_minimal(base_size = 11)
+```
+
+## Cena a gatunek: test Kruskala-Wallisa
+
+-   **H₀:** rozkład `Price` jest identyczny we wszystkich grupach `Primary_tag`
+
+-   **H₁:** co najmniej jedna grupa ma inny rozkład cen niż pozostałe
+
+```{r}
+kruskal.test(Price ~ Primary_tag, data = games)
+```
+
+**Odrzucamy H₀**. Ceny gier różnią się istotnie statystycznie między gatunkami.
