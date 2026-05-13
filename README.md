@@ -173,7 +173,7 @@ Wykres *Residuals vs Leverage* pokazuje kolumnową strukturę punktów — efekt
 Patrząc na współczynniki, największy wpływ mają:
 
 | Zmienna | Współczynnik | Interpretacja |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | `is_freeFree` | **+2.167**\* | Gry F2P mają \~8.7× wyższy Peak CCU niż płatne przy pozostałych czynnikach stałych — najsilniejszy efekt w modelu |
 | `log_Price` | +0.544\*\*\* | Elastyczność ceny: droższe gry przyciągają więcej graczy jednocześnie |
 | `log_Med_Playtime` | +0.451\*\*\* | Gry angażujące na dłużej mają wyższy CCU |
@@ -186,3 +186,19 @@ Patrząc na współczynniki, największy wpływ mają:
 #### Wniosek
 
 Model jest **statystycznie istotny i poprawnie skonstruowany**, jednak jego zdolność predykcyjna jest ograniczona. Główne problemy to heteroskedastyczność i nienormalność reszt, napędzane przez kilka megahitów z ekstremalnymi wartościami CCU. Wyniki należy interpretować jako **opis przeciętnych tendencji rynkowych**, nie jako narzędzie do przewidywania sukcesu konkretnej gry. Dla lepszego modelu należałoby uwzględnić dane marketingowe, datę premiery względem konkurencji czy przynależność do uznanej serii — informacje niedostępne w tym zbiorze danych.
+
+### Wilcoxon rank-sum test (Peak CCU vs Type)
+
+Wynik testu wskazuje na istotną statystycznie różnicę w medianie Peak_CCU pomiędzy typami gier (p \< 0.001). Oznacza to, że gry singleplayer i multiplayer różnią się poziomem maksymalnej liczby jednoczesnych graczy.
+
+------------------------------------------------------------------------
+
+### Wilcoxon rank-sum test (Median playtime vs Type)
+
+Nie stwierdzono istotnej statystycznie różnicy w medianie czasu gry pomiędzy typami (p = 0.2995). Sugeruje to, że typ gry (singleplayer/multiplayer) nie wpływa istotnie na przeciętny czas gry.
+
+------------------------------------------------------------------------
+
+### Test chi-kwadrat (Estimated owners vs Type)
+
+Wykazano istotną zależność pomiędzy typem gry a kategorią liczby właścicieli (p \< 0.001). Oznacza to, że rozkład liczby właścicieli różni się w zależności od typu gry.
