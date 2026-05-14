@@ -65,6 +65,12 @@ ggplot(games, aes(x = Price)) +
 ## Wykres logarytmiczny
 Widzimy, że w skali logarytmicznej (po usunięciu gier bezpłatnych) rozkład cen przypomina rozkład normalny. Skoro dzieje się to w skali logarytmicznej, najprawdopodobniej mamy do czynienia z rozkładem log-normalnym. Dysponujemy dużym zbiorem danych (115 tys. obserwacji), więc aby sprawdzić naszą hipotezę, najlepiej będzie użyć wykresu kwantylowego (Q-Q plot). W tym celu zlogarytmujemy ceny i sporządzimy odpowiednie wykresy.
 
+Przed tym możemy zrobić testy normalności. Test Shapiro nie zadziała bo mamy >5000 próbek. Test Kolmogorova-Smirnova pokazuje nam
+```{r, echo=TRUE}
+ks.test(games$Price, "plnorm")
+```
+Co prawda, mamy duzą liczbę próbek, więc dla tego mamy taki niski p-value.
+
 ## Wykres kwantylowy
 ```{r, echo=TRUE}
 paid_games <- games %>%
@@ -156,8 +162,8 @@ sd_factor   <- 10^sd_log
 stats_label <- paste0(
   "Log Mean: ", round(mean_log, 3), 
   "\nLog SD: ", round(sd_log, 3),
-  "\n\nExp Mean: ", round(mean_dollar, 2),
-  "\nExp SD: ", round(sd_factor, 2)
+  "\n\nExp Mean: ", round(mean_dollar, 2), "$",
+  "\nExp SD: ", round(sd_factor, 2), "$"
 )
 
 ggplot(paid_games, aes(x = log_price)) +
@@ -244,15 +250,68 @@ ggplot(paid_games, aes(x = Price)) +
 ## Dystrybuanta rozkładu
 Widzimy bardzo dobre dopasowanie. Widać również skoki przy najpopularniejszych cenach ($1, $5, $7, $10). Ponieważ liczba obserwacji jest bardzo duża (115 tys.), wyznaczanie przedziałów ufności nie ma większego sensu – przy takiej skali zaczyna działać prawo wielkich liczb i przedziały byłyby ekstremalnie wąskie.
 
+```{r}
+library(boot)
+
+get_mean <- function(data, indices) {
+  return(mean(data[indices]))
+}
+
+boot_results <- boot(data = paid_games$Price, statistic = get_mean, R = 1000)
+
+# Get CI
+boot.ci(boot_results, type = "perc")
+```
+
+
+# Liczba rekomendacji
+
+## Czy istnieje związek z ceną?
+```{r}
+games_recommendations <- lm(Recommendations ~ Price, data=paid_games)
+
+summary(games_recommendations)
+```
+
+## Czy istnieje związek z ceną?
+W skali logarytmicznej
+```{r}
+games_recommendations <- lm(log1p(Recommendations) ~ log1p(Price), data=paid_games)
+
+summary(games_recommendations)
+```
+$e^{2.56} \approx 13$
+
+## Czy istnieje związek z ceną?
+```{r, echo=TRUE}
+price_breaks <- c(0, 5, 10, 20, 40, 60, 100, 1000)
+price_labels <- c("$0-$5", "$5-$10", "$10-$20", "$20-$40", "$40-$60", "$60-$100", "$100-$1000")
+
+# Stosujemy średnią rekomendacji do grupy
+price_analysis <- games %>%
+  mutate(price_tier = cut(Price, 
+                          breaks = price_breaks, 
+                          labels = price_labels,
+                          include.lowest = TRUE)) %>%
+  group_by(price_tier) %>%
+  summarise(
+    avg_recs = mean(Recommendations, na.rm = TRUE),
+    game_count = n()
+  )
+```
+```{r}
+print(price_analysis)
+```
 
 # Liczba właściceli
 
+## Liczba właściceli
 Mamy kolumnę \`Owner factor\`, która zawiera szacowaną liczbę właścicieli gier. Możemy przeprowadzić analizę opisową tej statystyki.
 ```{r, echo=TRUE, message=FALSE, warning=FALSE}
 library(tidyverse)
 
 # 1. Expand Categories (One row per game per category)
-games_clean <- paid_games %>%
+games_clean <- games %>%
   mutate(category_list = strsplit(as.character(Categories), ",")) %>%
   unnest(category_list) %>%
   mutate(category_list = trimws(category_list)) # Remove accidental spaces
@@ -297,7 +356,7 @@ games_clean <- games_clean %>%
 ## Liczba właściceli
 ```{r}
 ggplot(games_clean, aes(x = Owners_Factor, y = Price, fill = Owners_Factor)) +
-  geom_violin(trim = TRUE, alpha = 0.7) + 
+  geom_violin(trim = TRUE, alpha = 0.7, scale="width") + 
   
   geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, alpha = 0.5) +
   
@@ -306,7 +365,6 @@ ggplot(games_clean, aes(x = Owners_Factor, y = Price, fill = Owners_Factor)) +
   coord_flip(ylim = c(0, 100)) +
   scale_fill_viridis_d(option = "mako", guide = "none") +
   labs(title = "Czym różnią się ceny w zależności od liczby właścicieli?",
-       subtitle = "Szerokość 'skrzypiec' oznacza większą liczbę gier w danej cenie",
        x = "Przedział Właścicieli",
        y = "Cena") +
   theme_minimal() 
@@ -318,7 +376,7 @@ Widzimy, że nie ma silnego związku między szacowaną liczbą właścicieli a 
 ```{r, echo=TRUE}
 kruskal.test(Price ~ Owners_Factor, data = games_clean)
 ```
-W rzeczywistości otrzymujemy tak niską wartość p-value głównie ze względu na bardzo dużą liczbę obserwacji. Stwórzmy mapę ciepła (heatmap), aby sprawdzić, czy faktycznie istnieje tam jakakolwiek zależność.
+Chi kwadrat jest duże, więc rozkłady są różne. W rzeczywistości otrzymujemy tak niską wartość p-value głównie ze względu na bardzo dużą liczbę obserwacji. Stwórzmy mapę ciepła (heatmap), aby sprawdzić, czy faktycznie istnieje tam jakakolwiek zależność.
 
 ## Liczba właściceli
 Podział gier na grupy.
@@ -330,7 +388,7 @@ games_analysis <- games_clean %>%
                                      "Mid ($5-$15)", "Standard ($15-$30)", 
                                      "Premium (>$30)")))
 
-prop_table <- prop.table(table(games_analysis$Price_Tier, games_analysis$Owners_Factor), margin = 2)
+prop_table <- prop.table(table(games_analysis$Price_Tier, droplevels(games_analysis$Owners_Factor)), margin = 2)
 ```
 
 ## Liczba właściceli
@@ -340,14 +398,14 @@ ggplot(as.data.frame(prop_table), aes(x = Var2, y = Var1, fill = Freq)) +
   geom_tile() +
   scale_fill_gradient(low = "white", high = "red", labels = percent) +
   labs(title = "Czy cena pozwala przewidzieć liczbę właścicieli?",
-       x = "Owner Range", y = "Price Tier", fill = "% gier") +
+       x = "Przedział Właścicieli", y = "Cena", fill = "% gier") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
-Widzimy, że droższe gry mają większe prawdopodobieństwo sukcesu. Nie możemy jednak wysnuć tak jednoznacznych wniosków w przypadku gier kategorii (Mid).
 
 # Kategorie gier
 
+## Kategorie gier
 ```{r, echo=TRUE}
 category_price_relation <- games_clean %>%
   filter(Price > 0) %>%
@@ -376,33 +434,9 @@ ggplot(head(category_price_relation, 20), aes(x = reorder(category_list, median_
 kruskal.test(Price ~ category_list, data = games_clean)
 ```
 
-# Liczbą rekomendacji
-
-Czy istnieje związek między ceną a liczbą rekomendacji?
-```{r, echo=TRUE}
-price_breaks <- c(0, 5, 10, 20, 40, 60, 100, 1000)
-price_labels <- c("$0-$5", "$5-$10", "$10-$20", "$20-$40", "$40-$60", "$60-$100", "$100-$1000")
-
-# Stosujemy średnią rekomendacji do grupy
-price_analysis <- games_clean %>%
-  mutate(price_tier = cut(Price, 
-                          breaks = price_breaks, 
-                          labels = price_labels,
-                          include.lowest = TRUE)) %>%
-  group_by(price_tier) %>%
-  summarise(
-    avg_recs = mean(Recommendations, na.rm = TRUE),
-    game_count = n()
-  )
-```
-
-## Liczbą rekomendacji
-```{r}
-print(price_analysis)
-```
-
-
 # Publishers
+
+## Publishers
 
 Analiza czołowych wydawców gier
 ```{r, echo=TRUE}
@@ -464,8 +498,7 @@ ggplot(top_20_publishers, aes(x = reorder(publisher_list, n), y = n)) +
 ```
 
 ## Publishers
-```{r}
-# Quick check of top publisher pricing strategies
+```{r, echo=TRUE}
 publishers_clean %>%
   filter(publisher_list %in% top_20_publishers$publisher_list) %>%
   group_by(publisher_list) %>%
@@ -473,112 +506,95 @@ publishers_clean %>%
   arrange(desc(median_price))
 ```
 
+## Publishers
+```{r, echo=TRUE}
+games_unique <- games_clean %>% 
+  distinct(AppID, .keep_all = TRUE)
+
+publisher_stats <- games_unique %>%
+  group_by(Publishers) %>%
+  summarise(
+    game_count = n(),
+    total_recs = sum(Recommendations, na.rm = TRUE),
+    avg_recs_per_game = mean(Recommendations, na.rm = TRUE)
+  ) %>%
+  filter(game_count >= 5) %>% # Filters out "one-hit wonders" or tiny devs
+  arrange(desc(total_recs))
+```
 ```{r}
-library(boot)
-
-# Function to get the mean
-get_mean <- function(data, indices) {
-  return(mean(data[indices]))
-}
-
-# Run bootstrap
-boot_results <- boot(data = paid_games$Price, statistic = get_mean, R = 1000)
-
-# Get CI
-boot.ci(boot_results, type = "perc")
+head(publisher_stats, 10)
 ```
 
 # Liczba godzin
 
-## REGRESJA WIELORAKA
+## Związek z rekomendacjami
 ```{r}
-# 1. Correlation (Non-parametric)
-cor_test <- cor.test(paid_games$`Average playtime forever`, paid_games$Recommendations, method = "spearman")
-
-# 2. Visualization
-aes(x = `Average playtime forever`, y = Recommendations)
-ggplot(games_unique, aes(x = `Average playtime forever`, y = Recommendations)) +
+ggplot(games, aes(x = `Average playtime forever`, y = Recommendations)) +
   coord_cartesian(xlim=c(0,1000), ylim = c(0, 10000)) +
   geom_point(alpha = 0.2, size = 0.5, color = "steelblue") +
-  geom_smooth(method = "lm", color = "orange") +
-  labs(x = "Recommendations", y = "Average Playtime") +
+  geom_smooth(method = "lm", color = "red") +
+  labs(x = "Liczba rekomendacji", y = "Liczba godzin") +
   theme_minimal()
 ```
 
-## Liczba godzin
-
+## Regresja wieloraka
+W skali liniowej nic ciekawego...
 ```{r}
 # We use log1p because playtime can be 0
-playtime_model <- lm(log1p(`Average playtime forever`) ~ log1p(Price) + log1p(Recommendations) + Owners_Factor, data = games_clean)
+playtime_model <- lm(`Average playtime forever` ~ Price + Recommendations + Owners_Factor, data = games_unique)
 
 summary(playtime_model)
 ```
-## Liczba godzin
+
+## Regresja wieloraka
 
 ```{r}
-# Create a unique dataset (1 row per game)
-games_unique <- games_clean %>% 
-  distinct(AppID, .keep_all = TRUE) # Replace 'AppID' with your unique ID column
-
-# Run the same model
 model_unique <- lm(log1p(`Average playtime forever`) ~ log1p(Price) + 
                     log1p(Recommendations) + Owners_Factor, 
                   data = games_unique)
 
 summary(model_unique)
 ```
-OWNERS_FACTOR.L P VALUE IS 0.9365 NIE MA ZWIAZKU
-OWNER.FACTOR.Q P VALUE IS LOW
-WE HAVE NON LINEAR RELATION
+
+## Regresja wieloraka
+Tutaj już bardziej ciekawo.
+Najpierw, Intercept: $e^{1.767} - 1 \approx 4,85$
+Residua $e^{1.421} \approx 4.14$
 
 # DLC
 
-```{r}
-dlc_playtime <- lm(`DLC count` ~ `Average playtime forever` + Owners_Factor, data=games_clean)
+## Związek z liczbą godzin
 
-summary(dlc_playtime)
-```
-Widzimy nie ma zależności
-
-## DLC
-```{r}
+```{r, message=FALSE}
 ggplot(games_clean, aes(x = `Average playtime forever`, y = `DLC count`)) +
-  # 1. Use geom_jitter with very low alpha
-  # alpha = 0.01 means a point is 99% transparent
   geom_jitter(alpha = 0.05, size = 0.5, color = "steelblue", width = 0.1, height = 0.2) +
   
-  # 2. Add the regression line
   geom_smooth(method = "lm", color = "red", linewidth = 1) +
   
-  # 3. Zoom into the same area as your 000016_2.png
   coord_cartesian(xlim = c(0, 10000), ylim = c(0, 50)) +
   
-  labs(title = "DLC Count vs. Playtime (Non-Cluttered)",
-       subtitle = "Dots show individual games; red line shows the significant (but weak) trend",
-       x = "Average Playtime (Minutes)",
-       y = "Number of DLCs") +
+  labs(title="Czy gry posiadające DLC sprawiają, że gracze spędzają w nich więcej czasu?", 
+       x = "Liczba godzin", y = "Liczba DLC") +
   theme_minimal()
 ```
 
-## DLC
-
-Widzimy że oczywiście więced DLC znaczy więcej czasu spędzonego w grze. Ale oczywiście nie wiemy ile potzebujemy czasu dla DLC więc mamy niski R^2
+## Związek z liczbą właścicieli
 
 ```{r}
 ggplot(games_clean, aes(x = Owners_Factor, y = `DLC count`, fill = Owners_Factor)) +
   geom_boxplot(outlier.alpha = 0.1, outlier.size = 0.5) +
   coord_flip(ylim=c(0,50)) +
   scale_fill_viridis_d(option = "plasma", guide = "none") +
-  labs(title = "Do popular games have more DLCs?",
-       x = "Owner Tier",
-       y = "Number of DLCs") +
+  
+  labs(title = "Czy popularne gry mają więcej DLC?",
+       x = "Liczba graczy",
+       y = "Liczba DLC") +
   theme_minimal()
 ```
 
 ## DLC
 
-```{r}
-library(dplyr)
+```{r, warning=FALSE, message=FALSE}
 summary_data <- games_clean %>%
   group_by(Owners_Factor) %>%
   summarise(mean_dlc = mean(`DLC count`, na.rm = TRUE))
