@@ -173,7 +173,7 @@ Wykres *Residuals vs Leverage* pokazuje kolumnową strukturę punktów — efekt
 Patrząc na współczynniki, największy wpływ mają:
 
 | Zmienna | Współczynnik | Interpretacja |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | `is_freeFree` | **+2.167**\* | Gry F2P mają \~8.7× wyższy Peak CCU niż płatne przy pozostałych czynnikach stałych — najsilniejszy efekt w modelu |
 | `log_Price` | +0.544\*\*\* | Elastyczność ceny: droższe gry przyciągają więcej graczy jednocześnie |
 | `log_Med_Playtime` | +0.451\*\*\* | Gry angażujące na dłużej mają wyższy CCU |

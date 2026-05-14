@@ -21,6 +21,7 @@ library(forcats)
 library(ggplot2)
 library(GGally)
 library(stringr)
+library(tibble)
 ```
 
 # Wczytywanie i parsowanie datasetu
@@ -113,17 +114,41 @@ games <- games %>%
 
 ## Struktura datasetu
 
-```{r dataset-size}
-cat("Wymiary:", nrow(games), "wierszy ×", ncol(games), "kolumn\n")
-cat("Zostawione kolumny:\n", names(games))
+```{r dataset-size, echo=FALSE}
+# Nicely formatted dataset summary with two-column layout
+
+cat("Wymiary datasetu:\n")
+cat(nrow(games), "wierszy ×", ncol(games), "kolumn\n\n")
+
+cat("Zostawione kolumny:\n\n")
+
+cols <- names(games)
+half <- ceiling(length(cols) / 2)
+
+left_col <- cols[1:half]
+right_col <- cols[(half + 1):length(cols)]
+
+# Fill shorter column if needed
+if (length(right_col) < length(left_col)) {
+  right_col <- c(right_col, rep("", length(left_col) - length(right_col)))
+}
+
+# Print aligned columns
+for (i in seq_along(left_col)) {
+  cat(
+    sprintf("• %-35s • %s\n",
+            left_col[i],
+            right_col[i])
+  )
+}
 
 ```
 
 # Analiza opisowa
 
-## Rozkład gier wg grup Estimated Owners {.smaller}
+## Funkcja pomocnicza {.smaller}
 
-```{r humanize_owner}
+```{r humanize_owne, echo=TRUE}
 humanize_owner_est <- function(x) {
   parts <- strsplit(x, "-")[[1]]
   fmt <- function(n) {
@@ -202,7 +227,9 @@ ggplot(steam_violin, aes(x = Estimated_owners_human, y = Positive_Percent)) +
         legend.position = "top")
 ```
 
-```{r genre-plot, fig.height=4, fig.width=9}
+## LIczba gier wędług gatunku
+
+```{r genre-plot, fig.height=6, fig.width=10}
 games %>%
   filter(!is.na(Primary_tag)) %>%
   count(Primary_tag, name = "n_games") %>%
@@ -379,7 +406,7 @@ steam_corr_log <- games %>%
 ggpairs(steam_corr_log,
         columnLabels = c("log(Price)", "log(Positive %)", "log(Med Playtime)", "log(Peak CCU)"),
         lower = list(continuous = wrap("points", alpha = 0.15, size = 0.4, color = "#4e79a7")),
-        diag  = list(continuous = wrap("densityDiag", fill = "#4e79a7", alpha = 0.4, color = NA)),
+        diag  = list(continuous = wrap("densityDiag", fill = "#A71E1E", alpha = 0.4, color = NA)),
         upper = list(continuous = wrap("cor", size = 3.5, color = "#2c2c2c"))) +
   labs(title = "Macierz korelacji — Steam games (log1p)",
        subtitle = "Wszystkie zmienne przekształcone jako log(x + 1)") +
@@ -405,7 +432,12 @@ ggpairs(steam_corr_log,
 
 Zastosowano **log-liniowy model regresji wielorakiej** (*log-log multiple linear regression*):
 
-$$\log(\text{Peak_CCU}) = \beta_0 + \beta_1 \log(\text{Med_Playtime}) + \beta_2 \log_{1p}(\text{Price}) + \beta_3 \cdot \mathbb{1}[\text{Free}] + \sum_k \gamma_k \cdot \mathbb{1}[\text{Genre}_k] + \varepsilon$$
+$$
+\begin{aligned}
+\log(\text{Peak_CCU}) =\;& \beta_0 + \beta_1 \log(\text{Med_Playtime}) + \beta_2 \log_{1p}(\text{Price}) \\
+&+ \beta_3 \cdot \mathbb{1}[\text{Free}] + \sum_k \gamma_k \cdot \mathbb{1}[\text{Genre}_k] + \varepsilon
+\end{aligned}
+$$
 
 **Zmienne objaśniające:**
 
@@ -449,13 +481,13 @@ print(s$coefficients[genre_rows, ])
 
 ## Diagnostyka modelu regresji
 
-```{r reg-diag, fig.height=8, fig.width=10}
+```{r reg-diag, fig.height=5, fig.width=10}
 par(mfrow = c(2, 2)); plot(model_multi_reg); par(mfrow = c(1, 1))
 ```
 
 ## Wzór modelu i efekty gatunków {.smaller}
 
-```{r reg-formula}
+```{r reg-formula, echo=FALSE}
 coefs <- coef(model_multi_reg)
 fmt <- function(x, digits=4) paste0(ifelse(x >= 0, " + ", " - "), round(abs(x), digits))
 
@@ -526,6 +558,8 @@ kruskal.test(Price ~ Primary_tag, data = games)
 
 **Odrzucamy H₀**. Ceny gier różnią się istotnie statystycznie między gatunkami.
 
+## Wyznaczanie typu gry na podstawie `Categories`
+
 ```{r sp_or_mp_df, echo=TRUE}
 # Create a new dataframe with game type classification
 games_sp_or_mp <- games %>%
@@ -552,21 +586,21 @@ games_sp_or_mp <- games %>%
     Lower_bound = as.numeric(sub("-.*", "", Estimated_owners)),
     Estimated_owners = sapply(as.character(Estimated_owners), humanize_owner_est)
    )
-
-cat("Games with unknown type:", sum(is.na(games_sp_or_mp$Type)), "\n")
-cat("Coverage:", round(100 * mean(!is.na(games_sp_or_mp$Type)), 1), "%\n")
-
 ```
 
-## Wilcoxon rank-sum test (`Peak_CCU` kontra kontra typ gry)
+## Bardzo dobry coverage
+
+```{r sp_or_mp_df_result, echo=FALSE}
+cat("Games with unknown type:", sum(is.na(games_sp_or_mp$Type)), "\n")
+cat("Coverage:", round(100 * mean(!is.na(games_sp_or_mp$Type)), 1), "%\n")
+```
+
+## Wilcoxon rank-sum test (`Peak_CCU` vs typ gry)
 
 -   **H₀:** Rozkład Peak_CCU jest taki sam dla gier singleplayer i multiplayer.
-
-<!-- -->
-
 -   **H₁:** Rozkład Peak_CCU różni się pomiędzy typami gier .
 
-```{r wilcoxon test, echo=TRUE}
+```{r wilcoxon_test_peak_CCU, echo=TRUE}
 # Wilcoxon test comparing Peak CCU between Single-player and Multi-player only
 wilcox_peak <- games_sp_or_mp %>%
   filter(Type %in% c("Single-player", "Multi-player")) %>%
@@ -580,7 +614,7 @@ Wynik testu wskazuje **na istotną statystycznie różnicę** w medianie `Peak_C
 
 ## Potwierdzenie przez wizualizację
 
-```{r peak_ccu_violin}
+```{r peak_ccu_violin,fig.height=6, fig.width=10}
 # Violin plot for Peak CCU distribution by game type
 ggplot(
   games_sp_or_mp %>% filter(!is.na(Type)),
@@ -600,12 +634,9 @@ ggplot(
 ## Wilcoxon rank-sum test (`Median_playtime_forever` vs typ gry)
 
 -   **H₀:** Rozkład medianowego czasu gry jest taki sam dla gier singleplayer i multiplayer.
-
-<!-- -->
-
 -   **H₁:** Rozkład medianowego czasu gry różni się pomiędzy typami gier.
 
-```{r wilcoxon test, echo=TRUE}
+```{r wilcoxon_test_playtime, echo=TRUE}
 # Wilcoxon test comparing Peak CCU between Single-player and Multi-player only
 wilcox_med <- games_sp_or_mp %>%
   filter(Type %in% c("Single-player", "Multi-player")) %>%
@@ -619,7 +650,7 @@ Nie stwierdzono istotnej statystycznie różnicy w medianie czasu gry pomiędzy 
 
 ## Potwierdzenie przez wizualizację
 
-```{r peak_ccu_violin}
+```{r playtime_violin,fig.height=6, fig.width=10}
 # Violin plot for Peak CCU distribution by game type
 ggplot(
   games_sp_or_mp %>% filter(!is.na(Type)),
@@ -658,12 +689,9 @@ owners_matrix <- owners_type_table %>%
 ## Wyniki testu
 
 -   **H₀:** Typ gry (singleplayer/multiplayer/both) i kategoria liczby właścicieli są niezależne.
-
-<!-- -->
-
 -   **H₁:** Istnieje zależność pomiędzy typem gry a kategorią liczby właścicieli.
 
-```{r}
+```{r, chisq_test_result, echo=TRUE}
 # Perform chi-square test
 chi_owners <- chisq.test(owners_matrix)
 
@@ -675,7 +703,7 @@ Wykazano istotną zależność pomiędzy typem gry a kategorią liczby właścic
 
 ## Kolejne sortowanie
 
-```{r}
+```{r,echo=TRUE}
 # Order Estimated_owners properly
 owner_levels <- games_sp_or_mp %>%
   arrange(Lower_bound) %>%
@@ -692,9 +720,9 @@ games_sp_or_mp <- games_sp_or_mp %>%
   )
 ```
 
-## Porównywanie rozkładów Estimated Owners kontra Game Type
+## Porównywanie rozkładów `Estimated Owners` vs typ gry
 
-```{r eo_heatmap, fig.height=4, fig.width=9}
+```{r eo_heatmap, fig.height=4, fig.width=9, echo=FALSE}
 # Heatmap of Estimated Owners distribution by game Type
 games_sp_or_mp %>%
   filter(!is.na(Type), !is.na(Estimated_owners)) %>%
@@ -722,7 +750,7 @@ Usuwamy najpierw gry, które nie mają żadnych recenzji w Steam, potem te z zer
 
 W tym datasecie nie ma różnicy między oceną 0 na Metacritic a jej brakiem. Zakładamy, że szansza na uzyskanie przez jakkolwiek słabą grę prawdziwej oceny 0 jest bardzo mała, zatem usuwanie jedynie kilku takich gier gdyby istniały nie zmieniło by znacząco wyniku.
 
-```{r}
+```{r, echo=TRUE}
 initial_n <- nrow(games)
 
 # Remove NA in Positive_Percent
@@ -744,7 +772,7 @@ final_n <- nrow(games_opinion_clean)
 
 Bardzo wiele gier nie ma oceny na Metacritic.
 
-```{r}
+```{r, echo=FALSE}
 cat("Initial observations:", initial_n, "\n")
 cat("Removed NA Positive_Percent:", removed_na,
     "(", round(removed_na / initial_n * 100, 2), "% )\n")
@@ -756,7 +784,7 @@ cat("Final dataset size:", final_n,
 
 ## Korelacja Spearmana
 
-```{r}
+```{r, spearmann_corr, echo=TRUE}
 # Spearman correlation 
 spearman_test <- cor.test(
   games_opinion_clean$Positive_Percent,
@@ -769,7 +797,7 @@ print(spearman_test)
 
 ## Korelacja Pearsona
 
-```{r}
+```{r pearson_corr, echo=TRUE}
 # Pearson correlation
 pearson_test <- cor.test(
   games_opinion_clean$Positive_Percent,
@@ -785,8 +813,8 @@ Wyniki wskazują na umiarkowaną dodatnią korelację między ocenami graczy a o
 
 Nie jest to korelacja idealna, ewidentnie gracze i krytycy nie zawsze są zgodni.
 
-```{r opinion_scatter}
-ggplot(games_clean, aes(x = Metacritic_score, y = Positive_Percent)) +
+```{r opinion_scatter, echo=FALSE,fig.height=4, fig.width=10}
+ggplot(games_opinion_clean, aes(x = Metacritic_score, y = Positive_Percent)) +
   geom_point(alpha = 0.3,color="#222222") +
   labs(
     title = "Recenzje graczy na sklepie Steam vs Metacritic",
